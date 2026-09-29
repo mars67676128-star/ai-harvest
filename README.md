@@ -8,51 +8,77 @@ The selected story: **the pump is green, but the water is rising.** Asset Operat
 
 ## Run locally
 
-Python 3.11+ is required. Tested here on Windows / Python 3.14.5. The default provider is deterministic and needs no credentials or paid calls.
+Python 3.11+ is required. Verified on Windows / Python 3.14.5; the other platforms/versions in CI have not yet run. Use the commands below from the repository root. No PostgreSQL server, manual SQL, `.env` file, cloud credentials or paid model calls are needed. The pinned dependency files are the reproducible install path.
 
-From the repository root, Windows PowerShell:
+### Windows PowerShell: environment, database, seed and API
+
+On a clean checkout:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.lock
-.\.venv\Scripts\python.exe -m harvest.demo
-.\.venv\Scripts\python.exe -m pytest -q
+$env:HARVEST_ENV = 'demo'
+$env:HARVEST_LLM_PROVIDER = 'mock'
+$env:HARVEST_DB = 'data/review.db'
+Remove-Item Env:HARVEST_AUTH_TOKENS -ErrorAction SilentlyContinue
+.\.venv\Scripts\python.exe -m harvest.demo --seed-only --database data/review.db --output artifacts/review-seed.json
+.\.venv\Scripts\python.exe -m uvicorn harvest.main:app --host 127.0.0.1 --port 8000
 ```
 
-The demo exercises the **actual REST API in process**, creates a new timestamped SQLite database, prints the narrative, and writes `artifacts/demo-report.json` with full API payloads, rule trace, diff and audit. It simulates separate expert/reviewer/approver/operator roles and labels them as simulated. It does not claim an actual qualified professional reviewed the synthetic rules.
+`Remove-Item Env:...` clears an inherited token override in this shell only; it does not delete a file. The seed command creates the database directory/file, applies `harvest/migrations/001_initial.sql`, and releases two synthetic v1.0.0 Pills through the actual governance endpoints. API startup also applies any missing numbered migrations automatically. No separate database setup command is required. For another clean run choose a new database filename; preserve existing history.
 
-One-command API startup after checkout:
+API: [http://127.0.0.1:8000](http://127.0.0.1:8000). Swagger: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs). Health: `/health`. Stop the process with Ctrl+C. The seed CLI uses fixed demo identities; use it against demo environments only.
+
+In a second PowerShell terminal, still at the repository root:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1
+.\.venv\Scripts\python.exe -m harvest.demo --output artifacts/demo-report.json
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m ruff check harvest tests scripts
+.\.venv\Scripts\python.exe -m ruff format --check harvest tests scripts
+.\.venv\Scripts\python.exe -m pip check
 ```
 
-On macOS/Linux:
+The default demo exercises the **actual REST API in process**, using its own newly timestamped database; it does not need the running server and does not change `data/review.db`. Its JSON report includes API payloads, rule traces, candidate diff and audit. Separate expert/reviewer/approver/operator roles are simulated; this is not qualified field review.
+
+### macOS/Linux: equivalent clean start
 
 ```sh
-sh scripts/start.sh
-# In another terminal:
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.lock
+export HARVEST_ENV=demo HARVEST_LLM_PROVIDER=mock HARVEST_DB=data/review.db
+unset HARVEST_AUTH_TOKENS
+.venv/bin/python -m harvest.demo --seed-only --database data/review.db --output artifacts/review-seed.json
+.venv/bin/python -m uvicorn harvest.main:app --host 127.0.0.1 --port 8000
+# In another terminal at the repository root:
 .venv/bin/python -m harvest.demo
 .venv/bin/python -m pytest -q
+.venv/bin/python -m ruff check harvest tests scripts
+.venv/bin/python -m ruff format --check harvest tests scripts
+.venv/bin/python -m pip check
 ```
 
-The launcher creates a virtual environment and installs dependencies if the environment is absent, then binds to loopback. If you already have an environment, run the install command after dependency changes.
+### Optional launcher and HTTP demo
 
-API: [http://127.0.0.1:8000](http://127.0.0.1:8000). Swagger: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs). Health: `/health`. The interactive docs are a developer aid; the scripted lifecycle is the demo.
+`powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1` or `sh scripts/start.sh` starts the same API. The launcher creates a virtual environment and installs dependencies if absent; it does not seed data, reset a database, load `.env`, or clear inherited configuration. Without `HARVEST_DB`, the default file is `data/harvest.db`.
 
-Seed the running API idempotently with two approved demo Pills:
+To seed an otherwise empty running demo API instead of seeding its database before startup:
 
 ```powershell
 .\.venv\Scripts\python.exe -m harvest.demo --url http://127.0.0.1:8000 --seed-only
 ```
 
-Or run the complete workflow against a **fresh** running API:
+The seeder leaves existing Pill identities unchanged, regardless of their state. It does not repair an interrupted draft, reapprove a deprecated version or reset a completed demo. Inspect `/api/v1/pills` or choose a fresh database if the prior run stopped midway.
+
+Run the complete workflow against the running API only while its data is fresh or contains just the initial v1.0.0 seed:
 
 ```powershell
 .\.venv\Scripts\python.exe -m harvest.demo --url http://127.0.0.1:8000
 ```
 
-Use a fresh database for each full demo; the workflow deliberately does not overwrite v1.1.0 on repeat. The default in-process demo does this automatically. `--database path/to/demo.db` selects a persistent file. Numbered SQL migrations apply automatically on application creation.
+Use a new database for each full HTTP demo; it deliberately does not overwrite v1.1.0 on repeat. The default in-process demo creates a fresh database automatically. `--database path/to/demo.db` selects the local demo's file and is ignored when `--url` selects a running API. Swagger is a developer aid; the scripted lifecycle is the demo.
+
+Ruff supplies the configured lint/static and formatting checks. No mypy/pyright type-check configuration or dedicated secret-scanning tool is installed/configured in this repository. See [review checkpoint](docs/CHECKPOINT.md) for verification scope and [TODO](docs/TODO.md) for known limitations.
 
 ## What works
 
@@ -79,7 +105,7 @@ FastAPI + Pydantic + SQLite in a modular monolith. Expert judgement lives in a f
 | Frontend integration | [Contract](docs/FRONTEND_CONTRACT.md), [OpenAPI snapshot](docs/openapi.json), [examples](examples/) |
 | Demo and judging story | [Six-minute walkthrough](docs/DEMO.md) |
 | Provenance and Tencent evidence | [Data provenance](docs/DATA_PROVENANCE.md), [hackathon evidence](docs/HACKATHON_EVIDENCE.md) |
-| Verification | [Acceptance evidence](docs/ACCEPTANCE.md) |
+| Independent review | [Checkpoint and verification](docs/CHECKPOINT.md), [known limitations](docs/TODO.md), [decision index](docs/DECISIONS.md), [acceptance evidence](docs/ACCEPTANCE.md) |
 
 Regenerate schemas and examples with `python scripts/export_contracts.py`. Example observation timestamps are fixed export snapshots: regenerate or replace them with current verified observations before invoking; stale observations intentionally abstain.
 

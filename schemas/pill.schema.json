@@ -1,0 +1,667 @@
+{
+  "$defs": {
+    "Action": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_.-]{0,79}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "human_approval_required": {
+          "const": true,
+          "default": true,
+          "title": "Human Approval Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "description"
+      ],
+      "title": "Action",
+      "type": "object"
+    },
+    "Condition": {
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "pattern": "^[a-z][a-z0-9_.-]{0,79}$",
+          "title": "Input",
+          "type": "string"
+        },
+        "op": {
+          "enum": [
+            "eq",
+            "ne",
+            "gt",
+            "gte",
+            "lt",
+            "lte"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "input",
+        "op",
+        "value"
+      ],
+      "title": "Condition",
+      "type": "object"
+    },
+    "Dependency": {
+      "additionalProperties": false,
+      "properties": {
+        "pill_id": {
+          "pattern": "^[a-z][a-z0-9_.-]{0,79}$",
+          "title": "Pill Id",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pill_id",
+        "version"
+      ],
+      "title": "Dependency",
+      "type": "object"
+    },
+    "EvaluationCase": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_.-]{0,79}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "asset_type": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Asset Type",
+          "type": "string"
+        },
+        "equipment": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Equipment",
+          "type": "string"
+        },
+        "context": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Context",
+          "type": "string"
+        },
+        "inputs": {
+          "patternProperties": {
+            "^[a-z][a-z0-9_.-]{0,79}$": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "title": "Inputs",
+          "type": "object"
+        },
+        "expected_decision": {
+          "enum": [
+            "HUMAN_REVIEW",
+            "ESCALATE",
+            "ABSTAIN"
+          ],
+          "title": "Expected Decision",
+          "type": "string"
+        },
+        "expected_actions": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,79}$",
+            "type": "string"
+          },
+          "title": "Expected Actions",
+          "type": "array"
+        },
+        "expected_blocked": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,79}$",
+            "type": "string"
+          },
+          "title": "Expected Blocked",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "asset_type",
+        "equipment",
+        "context",
+        "inputs",
+        "expected_decision",
+        "expected_actions"
+      ],
+      "title": "EvaluationCase",
+      "type": "object"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_.-]{0,79}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "expert_interview",
+            "public_context",
+            "incident",
+            "feedback"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "citation": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Citation",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "synthetic": {
+          "title": "Synthetic",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "citation",
+        "summary",
+        "synthetic"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "InputSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "pattern": "^[a-z][a-z0-9_.-]{0,79}$",
+          "title": "Key",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "number",
+            "boolean",
+            "string"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "unit": {
+          "maxLength": 50,
+          "title": "Unit",
+          "type": "string"
+        },
+        "max_age_seconds": {
+          "maximum": 86400,
+          "minimum": 1,
+          "title": "Max Age Seconds",
+          "type": "integer"
+        },
+        "minimum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Minimum"
+        },
+        "maximum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maximum"
+        },
+        "choices": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "title": "Choices",
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "description",
+        "kind",
+        "unit",
+        "max_age_seconds"
+      ],
+      "title": "InputSpec",
+      "type": "object"
+    },
+    "Rule": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_.-]{0,79}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "category": {
+          "enum": [
+            "heuristic",
+            "guardrail",
+            "escalation",
+            "exception"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "when": {
+          "items": {
+            "$ref": "#/$defs/Condition"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "When",
+          "type": "array"
+        },
+        "recommend": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,79}$",
+            "type": "string"
+          },
+          "title": "Recommend",
+          "type": "array"
+        },
+        "block": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,79}$",
+            "type": "string"
+          },
+          "title": "Block",
+          "type": "array"
+        },
+        "escalate_to": {
+          "anyOf": [
+            {
+              "maxLength": 4000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Escalate To"
+        },
+        "rationale": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,79}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "category",
+        "when",
+        "rationale",
+        "evidence_ids"
+      ],
+      "title": "Rule",
+      "type": "object"
+    },
+    "Scope": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_types": {
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Asset Types",
+          "type": "array"
+        },
+        "equipment": {
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Equipment",
+          "type": "array"
+        },
+        "contexts": {
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Contexts",
+          "type": "array"
+        },
+        "prerequisites": {
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Prerequisites",
+          "type": "array"
+        },
+        "exclusions": {
+          "items": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Exclusions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "asset_types",
+        "equipment",
+        "contexts",
+        "prerequisites",
+        "exclusions"
+      ],
+      "title": "Scope",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "name": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "domain": {
+      "enum": [
+        "Asset Operations",
+        "Energy Optimisation",
+        "Leasing",
+        "Technical Services",
+        "Sustainability",
+        "Tenant Experience"
+      ],
+      "title": "Domain",
+      "type": "string"
+    },
+    "description": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Description",
+      "type": "string"
+    },
+    "scope": {
+      "$ref": "#/$defs/Scope"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/InputSpec"
+      },
+      "maxItems": 50,
+      "minItems": 1,
+      "title": "Inputs",
+      "type": "array"
+    },
+    "facts": {
+      "items": {
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Facts",
+      "type": "array"
+    },
+    "expert_observations": {
+      "items": {
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Expert Observations",
+      "type": "array"
+    },
+    "assumptions": {
+      "items": {
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "exceptions": {
+      "items": {
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Exceptions",
+      "type": "array"
+    },
+    "actions": {
+      "items": {
+        "$ref": "#/$defs/Action"
+      },
+      "maxItems": 50,
+      "minItems": 1,
+      "title": "Actions",
+      "type": "array"
+    },
+    "prohibited_actions": {
+      "items": {
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Prohibited Actions",
+      "type": "array"
+    },
+    "guardrails": {
+      "items": {
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Guardrails",
+      "type": "array"
+    },
+    "rules": {
+      "items": {
+        "$ref": "#/$defs/Rule"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Rules",
+      "type": "array"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Evidence",
+      "type": "array"
+    },
+    "dependencies": {
+      "items": {
+        "$ref": "#/$defs/Dependency"
+      },
+      "maxItems": 1,
+      "title": "Dependencies",
+      "type": "array"
+    },
+    "evaluation": {
+      "items": {
+        "$ref": "#/$defs/EvaluationCase"
+      },
+      "maxItems": 100,
+      "minItems": 2,
+      "title": "Evaluation",
+      "type": "array"
+    },
+    "unresolved_questions": {
+      "items": {
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Unresolved Questions",
+      "type": "array"
+    },
+    "contradictions": {
+      "items": {
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Contradictions",
+      "type": "array"
+    },
+    "synthetic": {
+      "default": true,
+      "title": "Synthetic",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "name",
+    "domain",
+    "description",
+    "scope",
+    "inputs",
+    "expert_observations",
+    "assumptions",
+    "exceptions",
+    "actions",
+    "prohibited_actions",
+    "guardrails",
+    "rules",
+    "evidence",
+    "evaluation"
+  ],
+  "title": "PillContent",
+  "type": "object"
+}

@@ -2,6 +2,14 @@
 
 Backend MVP is frozen for independent review. This is a record of open work, not authorisation to implement it now. No frontend work or new product features should start during this review checkpoint.
 
+## Recovery status — 29 September 2026
+
+- [x] Confirmed the interrupted review task changed no tracked application code; all committed application work is preserved.
+- [x] Ran the existing full suite once: 48 passed, one existing dependency deprecation warning. No new tests or runtime changes.
+- [x] Preserved the incomplete packet as untracked `docs/REVIEW_PACKET.partial.md`; it contains placeholders/missing sections and is not a completed review report. Completion is outside this recovery task.
+- [x] Preserved the original untracked user PDF. The recovery checkpoint contains only CHECKPOINT/TODO updates.
+- [ ] Publish the development branch when a GitHub remote is supplied. No remote is configured; no push or merge occurred. Commands remain in CHECKPOINT.md.
+
 ## Independent review focus
 
 - [ ] Review the exact authority boundaries: caller roles, Pill owner/assigned reviewer, author separation, stale-parent rejection, current-release uniqueness and immutable content. Reviewer and approver need not be distinct from each other; each must differ from the author.
@@ -30,7 +38,7 @@ Backend MVP is frozen for independent review. This is a record of open work, not
 - [ ] `verified` observation quality is caller attestation, not live sensor validation. Structured asset/equipment/context/input rules are checked; narrative prerequisites/exclusions still require human judgement.
 - [ ] Examples contain export-time observation timestamps; stale inputs intentionally abstain. Regenerate examples or supply fresh observations before invoking them.
 
-## Completed for this checkpoint
+## Completed at the prior review checkpoint
 
 - [x] Full suite and configured checks pass in the existing and fresh environments.
 - [x] In-process and real HTTP demos pass; all six requested governance invariants checked.

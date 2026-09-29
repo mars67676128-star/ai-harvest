@@ -1,12 +1,22 @@
 # Backend MVP — independent review checkpoint
 
-Review preparation date: 29 September 2026. Branch: `codex/mvp-backend`.
+Recovery checkpoint date: 29 September 2026. Branch: `codex/mvp-backend`.
 
-The checkpoint is the Git commit containing this document (`git rev-parse HEAD` on the review branch). Application baseline: `d09e9c5`. This preparation changes documentation and secret-file exclusion patterns only. No product features, architecture redesign, dependency changes, database migrations, frontend work or runtime changes were made. No runtime defect requiring repair was reproduced in the requested governance checks.
+The checkpoint is the Git commit containing this document (`git rev-parse HEAD` on the review branch). Latest prior known-good checkpoint: `b35764d8694262efb289d24c87702ff3384dd149`. Application baseline: `d09e9c5`.
 
-## Verification results
+## Recovery after interrupted review preparation
 
-| Check | Current result |
+The interrupted task created only an untracked, incomplete review document. Inspection found no staged changes and no changes to tracked application code, tests, dependencies or configuration. All committed application work is preserved. The unfinished document was renamed to `docs/REVIEW_PACKET.partial.md` and remains uncommitted, with placeholders and missing sections; it is not a completed review report and was not finished during recovery.
+
+The existing full suite was run exactly once for this recovery: `.\.venv\Scripts\python.exe -m pytest -q` — **48 passed, 1 warning in 3.25s**. The warning is the existing Starlette/AnyIO deprecation described below. No tests were added and no application behaviour changed. This recovery commit updates only `docs/CHECKPOINT.md` and `docs/TODO.md`; only these documentation changes are staged, with no secret files or credential values included.
+
+The preserved untracked files are `docs/REVIEW_PACKET.partial.md` and the original `3af2d08d-d3f0-4998-98a5-a820bd245910.pdf`. Consequently tracked work is checkpointed, but the overall working tree still contains those two untracked files. No Git remote is configured, so no push was possible. No merge was performed.
+
+## Prior review verification results
+
+The following results belong to the prior review checkpoint, not fresh recovery runs. Recovery repeated only the full test suite above.
+
+| Check | Prior checkpoint result |
 |---|---|
 | Complete suite: `python -m pytest -q` | **48 passed**, one dependency deprecation warning |
 | Static/lint: `python -m ruff check harvest tests scripts` | Passed |

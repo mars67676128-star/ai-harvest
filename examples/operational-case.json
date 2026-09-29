@@ -1,0 +1,45 @@
+{
+  "title": "SYNTHETIC: Green pump indicator, rising basement water",
+  "asset_id": "harbour-exchange-demo",
+  "asset_type": "office",
+  "equipment": "basement_sump",
+  "context": "wet_weather",
+  "observations": {
+    "water_rise_mm_min": {
+      "value": 3,
+      "unit": "mm/min",
+      "source": "Synthetic verified demo observation",
+      "observed_at": "2026-09-29T06:13:27.683681Z",
+      "quality": "verified"
+    },
+    "pump_running": {
+      "value": true,
+      "unit": "",
+      "source": "Synthetic verified demo observation",
+      "observed_at": "2026-09-29T06:13:27.683681Z",
+      "quality": "verified"
+    },
+    "critical_equipment_exposed": {
+      "value": false,
+      "unit": "",
+      "source": "Synthetic verified demo observation",
+      "observed_at": "2026-09-29T06:13:27.683681Z",
+      "quality": "verified"
+    },
+    "alternative_route_verified": {
+      "value": false,
+      "unit": "",
+      "source": "Synthetic verified demo observation",
+      "observed_at": "2026-09-29T06:13:27.683681Z",
+      "quality": "verified"
+    },
+    "tenant_arrivals_expected": {
+      "value": true,
+      "unit": "",
+      "source": "Synthetic verified demo observation",
+      "observed_at": "2026-09-29T06:13:27.683681Z",
+      "quality": "verified"
+    }
+  },
+  "synthetic": true
+}

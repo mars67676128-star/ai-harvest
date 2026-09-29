@@ -21,3 +21,9 @@ Synthetic operational guidance is unvalidated. Runtime is a finite rule engine, 
 ## Execution and verification
 
 Run instructions, demo steps and verification results are maintained in README.md and docs/DEMO.md. Evidence requirements and live-service limitations are in HACKATHON_EVIDENCE.md. Frontend integration uses FRONTEND_CONTRACT.md and the generated OpenAPI document.
+
+Completed sections are saved as local Git checkpoint commits at the user's request. Initial checkpoints: `d8c9f7d` research/design, `0b31312` schema/foundation, `2a8af58` working lifecycle/AI/tests. The sandbox owns the initial Git directory; escalated checkpoint writes use an exact per-command safe-directory setting rather than changing global Git trust. No source PDF, secrets or generated databases are committed.
+
+Verified so far: 48 passing local deterministic tests, successful complete in-process API demo, generated OpenAPI/schema/examples, lint and formatting checks. Runtime uses pinned Starlette 0.52.1 for the established HTTPX test-client API; a transitive AnyIO deprecation warning remains non-fatal. Docker/Linux CI are unexecuted configurations, not verified deployments.
+
+Final handoff verification (2026-09-29): **48 tests passed**; Ruff lint and format checks passed; `pip check` reports no broken requirements. The complete lifecycle also passed through a real Uvicorn HTTP server at loopback port 8765, independently of the in-process demo. Saved outputs: `artifacts/demo-report.json` and `artifacts/http-demo-report.json` (intentionally untracked). Evidence shows cross-domain blocking, unchanged production before review, v1.1.0 promotion and historical v1.0.0 preservation. Both content and complete version schemas are exported. Live Tencent requests, Docker execution and Linux CI remain unverified.

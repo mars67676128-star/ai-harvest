@@ -1,0 +1,299 @@
+{
+  "schema_version": "1.0",
+  "name": "Monsoon near-miss triage",
+  "domain": "Asset Operations",
+  "description": "Distinguish equipment status from demonstrated drainage effectiveness.",
+  "scope": {
+    "asset_types": [
+      "office"
+    ],
+    "equipment": [
+      "basement_sump"
+    ],
+    "contexts": [
+      "wet_weather"
+    ],
+    "prerequisites": [
+      "Qualified duty team available; verified observations supplied."
+    ],
+    "exclusions": [
+      "Not a live emergency procedure; no personnel entry or equipment actuation guidance."
+    ]
+  },
+  "inputs": [
+    {
+      "key": "water_rise_mm_min",
+      "description": "Synthetic verified observation: water_rise_mm_min",
+      "kind": "number",
+      "required": true,
+      "unit": "mm/min",
+      "max_age_seconds": 900,
+      "minimum": -100.0,
+      "maximum": 100.0,
+      "choices": []
+    },
+    {
+      "key": "pump_running",
+      "description": "Synthetic verified observation: pump_running",
+      "kind": "boolean",
+      "required": true,
+      "unit": "",
+      "max_age_seconds": 900,
+      "minimum": null,
+      "maximum": null,
+      "choices": []
+    },
+    {
+      "key": "critical_equipment_exposed",
+      "description": "Synthetic verified observation: critical_equipment_exposed",
+      "kind": "boolean",
+      "required": true,
+      "unit": "",
+      "max_age_seconds": 900,
+      "minimum": null,
+      "maximum": null,
+      "choices": []
+    }
+  ],
+  "facts": [
+    "All operational values and people in this artifact are synthetic."
+  ],
+  "expert_observations": [
+    "A running pump indication does not prove effective drainage."
+  ],
+  "assumptions": [
+    "A site-specific emergency plan takes precedence over this demonstration."
+  ],
+  "exceptions": [
+    "Unknown conditions require qualified human assessment."
+  ],
+  "actions": [
+    {
+      "id": "inspect_drainage",
+      "description": "Request qualified drainage assessment from the duty facilities engineer.",
+      "human_approval_required": true
+    },
+    {
+      "id": "monitor_trend",
+      "description": "Ask the duty team to continue verified observation and reassess.",
+      "human_approval_required": true
+    },
+    {
+      "id": "review_access_plan",
+      "description": "Ask the incident lead to review an access plan after safe-route verification.",
+      "human_approval_required": true
+    }
+  ],
+  "prohibited_actions": [
+    "Automatic equipment control",
+    "Automatic access changes",
+    "Automatic tenant messaging",
+    "Automatic knowledge release"
+  ],
+  "guardrails": [
+    "Advisory output only; a qualified human owns consequential decisions.",
+    "Do not enter water-affected areas on the basis of this demo."
+  ],
+  "rules": [
+    {
+      "id": "running-is-not-draining",
+      "category": "heuristic",
+      "when": [
+        {
+          "input": "water_rise_mm_min",
+          "op": "gt",
+          "value": 0
+        },
+        {
+          "input": "pump_running",
+          "op": "eq",
+          "value": true
+        }
+      ],
+      "recommend": [
+        "inspect_drainage",
+        "review_access_plan"
+      ],
+      "block": [],
+      "escalate_to": "Duty facilities engineer",
+      "rationale": "Rising water contradicts the assumption that a running pump is managing inflow.",
+      "evidence_ids": [
+        "demo-interview"
+      ]
+    },
+    {
+      "id": "pump-not-running",
+      "category": "heuristic",
+      "when": [
+        {
+          "input": "water_rise_mm_min",
+          "op": "gt",
+          "value": 0
+        },
+        {
+          "input": "pump_running",
+          "op": "eq",
+          "value": false
+        }
+      ],
+      "recommend": [
+        "inspect_drainage"
+      ],
+      "block": [],
+      "escalate_to": "Duty facilities engineer",
+      "rationale": "Rising water and absent running indication need qualified assessment, not remote switching.",
+      "evidence_ids": [
+        "demo-interview"
+      ]
+    },
+    {
+      "id": "stable-trend",
+      "category": "heuristic",
+      "when": [
+        {
+          "input": "water_rise_mm_min",
+          "op": "lte",
+          "value": 0
+        },
+        {
+          "input": "critical_equipment_exposed",
+          "op": "eq",
+          "value": false
+        }
+      ],
+      "recommend": [
+        "monitor_trend"
+      ],
+      "block": [],
+      "escalate_to": null,
+      "rationale": "Verified stable trend without observed critical exposure permits a monitoring recommendation.",
+      "evidence_ids": [
+        "demo-interview"
+      ]
+    },
+    {
+      "id": "critical-exposure",
+      "category": "guardrail",
+      "when": [
+        {
+          "input": "critical_equipment_exposed",
+          "op": "eq",
+          "value": true
+        }
+      ],
+      "recommend": [],
+      "block": [
+        "monitor_trend",
+        "review_access_plan"
+      ],
+      "escalate_to": "Incident lead and qualified electrical specialist",
+      "rationale": "Critical equipment exposure exceeds this advisory workflow's authority.",
+      "evidence_ids": [
+        "demo-interview"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "demo-interview",
+      "kind": "expert_interview",
+      "citation": "Synthetic interview fixture; not a real professional interview.",
+      "summary": "Case-based reconstruction, novice pitfall, exceptions and escalation.",
+      "synthetic": true
+    },
+    {
+      "id": "pub-context",
+      "kind": "public_context",
+      "citation": "https://www.pub.gov.sg/Resources/News-Room/PressReleases/2026/06/Flood-Resilient-Developments-Guidebook",
+      "summary": "Context only: property-level flood resilience and response planning; does not validate our rules.",
+      "synthetic": false
+    }
+  ],
+  "dependencies": [],
+  "evaluation": [
+    {
+      "id": "rising",
+      "description": "Synthetic regression: rising",
+      "asset_type": "office",
+      "equipment": "basement_sump",
+      "context": "wet_weather",
+      "inputs": {
+        "water_rise_mm_min": 3,
+        "pump_running": true,
+        "critical_equipment_exposed": false
+      },
+      "expected_decision": "ESCALATE",
+      "expected_actions": [
+        "inspect_drainage",
+        "review_access_plan"
+      ],
+      "expected_blocked": []
+    },
+    {
+      "id": "stable",
+      "description": "Synthetic regression: stable",
+      "asset_type": "office",
+      "equipment": "basement_sump",
+      "context": "wet_weather",
+      "inputs": {
+        "water_rise_mm_min": 0,
+        "pump_running": true,
+        "critical_equipment_exposed": false
+      },
+      "expected_decision": "HUMAN_REVIEW",
+      "expected_actions": [
+        "monitor_trend"
+      ],
+      "expected_blocked": []
+    },
+    {
+      "id": "critical",
+      "description": "Synthetic regression: critical",
+      "asset_type": "office",
+      "equipment": "basement_sump",
+      "context": "wet_weather",
+      "inputs": {
+        "water_rise_mm_min": 3,
+        "pump_running": true,
+        "critical_equipment_exposed": true
+      },
+      "expected_decision": "ESCALATE",
+      "expected_actions": [
+        "inspect_drainage"
+      ],
+      "expected_blocked": [
+        "monitor_trend",
+        "review_access_plan"
+      ]
+    },
+    {
+      "id": "missing",
+      "description": "Synthetic regression: missing",
+      "asset_type": "office",
+      "equipment": "basement_sump",
+      "context": "wet_weather",
+      "inputs": {},
+      "expected_decision": "ABSTAIN",
+      "expected_actions": [],
+      "expected_blocked": []
+    },
+    {
+      "id": "scope",
+      "description": "Synthetic regression: scope",
+      "asset_type": "residential",
+      "equipment": "basement_sump",
+      "context": "wet_weather",
+      "inputs": {
+        "water_rise_mm_min": 0,
+        "pump_running": true,
+        "critical_equipment_exposed": false
+      },
+      "expected_decision": "ABSTAIN",
+      "expected_actions": [],
+      "expected_blocked": []
+    }
+  ],
+  "unresolved_questions": [],
+  "contradictions": [],
+  "synthetic": true
+}

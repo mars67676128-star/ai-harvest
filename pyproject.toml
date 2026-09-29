@@ -15,6 +15,9 @@ dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
 [tool.setuptools.package-data]
 harvest = ["migrations/*.sql", "prompts/*.txt"]
 
+[tool.setuptools.packages.find]
+include = ["harvest*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

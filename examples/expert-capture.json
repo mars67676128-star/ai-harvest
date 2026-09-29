@@ -1,0 +1,6 @@
+{
+  "title": "SYNTHETIC pump-status incident interview",
+  "domain": "Asset Operations",
+  "transcript": "SYNTHETIC EXPERT INTERVIEW: At Harbour Exchange the sump pump showed running, but basement water was still rising. A junior operator trusted the green status. I compare actual water trend with that indication and request qualified drainage inspection. A running signal is not proof of effective drainage. If water is rising while the pump runs, escalate to the duty facilities engineer. If water approaches critical equipment, escalate to the incident lead and never recommend entering the affected area. If water is stable or falling and no critical equipment is exposed, recommend continued observation for human review. Before considering an access plan, ask the tenant team to verify a safe alternative route. This applies only to our synthetic office basement sump during wet weather. No pump switching, barrier deployment, electrical work or automated messages are authorised.",
+  "synthetic": true
+}

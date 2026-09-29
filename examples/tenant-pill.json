@@ -1,0 +1,229 @@
+{
+  "schema_version": "1.0",
+  "name": "Tenant incident continuity",
+  "domain": "Tenant Experience",
+  "description": "Prevent a proposed access plan from outrunning verified tenant-route evidence.",
+  "scope": {
+    "asset_types": [
+      "office"
+    ],
+    "equipment": [
+      "basement_sump"
+    ],
+    "contexts": [
+      "wet_weather"
+    ],
+    "prerequisites": [
+      "Qualified duty team available; verified observations supplied."
+    ],
+    "exclusions": [
+      "Not a live emergency procedure; no personnel entry or equipment actuation guidance."
+    ]
+  },
+  "inputs": [
+    {
+      "key": "alternative_route_verified",
+      "description": "Synthetic verified observation: alternative_route_verified",
+      "kind": "boolean",
+      "required": true,
+      "unit": "",
+      "max_age_seconds": 900,
+      "minimum": null,
+      "maximum": null,
+      "choices": []
+    },
+    {
+      "key": "tenant_arrivals_expected",
+      "description": "Synthetic verified observation: tenant_arrivals_expected",
+      "kind": "boolean",
+      "required": true,
+      "unit": "",
+      "max_age_seconds": 900,
+      "minimum": null,
+      "maximum": null,
+      "choices": []
+    }
+  ],
+  "facts": [
+    "All operational values and people in this artifact are synthetic."
+  ],
+  "expert_observations": [
+    "An operationally convenient access plan can conflict with tenant safety constraints."
+  ],
+  "assumptions": [
+    "A site-specific emergency plan takes precedence over this demonstration."
+  ],
+  "exceptions": [
+    "Unknown conditions require qualified human assessment."
+  ],
+  "actions": [
+    {
+      "id": "review_access_plan",
+      "description": "Ask the incident lead to review an access plan after safe-route verification.",
+      "human_approval_required": true
+    },
+    {
+      "id": "draft_tenant_update",
+      "description": "Prepare a factual tenant update for the duty manager's review; do not send.",
+      "human_approval_required": true
+    },
+    {
+      "id": "tenant_liaison",
+      "description": "Ask the tenant duty manager to maintain incident liaison.",
+      "human_approval_required": true
+    }
+  ],
+  "prohibited_actions": [
+    "Automatic equipment control",
+    "Automatic access changes",
+    "Automatic tenant messaging",
+    "Automatic knowledge release"
+  ],
+  "guardrails": [
+    "Advisory output only; a qualified human owns consequential decisions.",
+    "Do not enter water-affected areas on the basis of this demo."
+  ],
+  "rules": [
+    {
+      "id": "unverified-route",
+      "category": "guardrail",
+      "when": [
+        {
+          "input": "alternative_route_verified",
+          "op": "eq",
+          "value": false
+        }
+      ],
+      "recommend": [
+        "tenant_liaison"
+      ],
+      "block": [
+        "review_access_plan"
+      ],
+      "escalate_to": "Tenant duty manager",
+      "rationale": "No verified alternative route means the access plan is not ready for approval.",
+      "evidence_ids": [
+        "demo-interview"
+      ]
+    },
+    {
+      "id": "verified-arrivals",
+      "category": "heuristic",
+      "when": [
+        {
+          "input": "alternative_route_verified",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "input": "tenant_arrivals_expected",
+          "op": "eq",
+          "value": true
+        }
+      ],
+      "recommend": [
+        "review_access_plan",
+        "draft_tenant_update"
+      ],
+      "block": [],
+      "escalate_to": null,
+      "rationale": "Verified route and expected arrivals justify preparing options for human review.",
+      "evidence_ids": [
+        "demo-interview"
+      ]
+    },
+    {
+      "id": "no-arrivals",
+      "category": "heuristic",
+      "when": [
+        {
+          "input": "alternative_route_verified",
+          "op": "eq",
+          "value": true
+        },
+        {
+          "input": "tenant_arrivals_expected",
+          "op": "eq",
+          "value": false
+        }
+      ],
+      "recommend": [
+        "tenant_liaison"
+      ],
+      "block": [],
+      "escalate_to": null,
+      "rationale": "Maintain coordination even if tenant arrivals are not currently expected.",
+      "evidence_ids": [
+        "demo-interview"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "demo-interview",
+      "kind": "expert_interview",
+      "citation": "Synthetic interview fixture; not a real professional interview.",
+      "summary": "Case-based reconstruction, novice pitfall, exceptions and escalation.",
+      "synthetic": true
+    },
+    {
+      "id": "pub-context",
+      "kind": "public_context",
+      "citation": "https://www.pub.gov.sg/Resources/News-Room/PressReleases/2026/06/Flood-Resilient-Developments-Guidebook",
+      "summary": "Context only: property-level flood resilience and response planning; does not validate our rules.",
+      "synthetic": false
+    }
+  ],
+  "dependencies": [],
+  "evaluation": [
+    {
+      "id": "unverified",
+      "description": "Synthetic regression: unverified",
+      "asset_type": "office",
+      "equipment": "basement_sump",
+      "context": "wet_weather",
+      "inputs": {
+        "alternative_route_verified": false,
+        "tenant_arrivals_expected": true
+      },
+      "expected_decision": "ESCALATE",
+      "expected_actions": [
+        "tenant_liaison"
+      ],
+      "expected_blocked": [
+        "review_access_plan"
+      ]
+    },
+    {
+      "id": "verified",
+      "description": "Synthetic regression: verified",
+      "asset_type": "office",
+      "equipment": "basement_sump",
+      "context": "wet_weather",
+      "inputs": {
+        "alternative_route_verified": true,
+        "tenant_arrivals_expected": true
+      },
+      "expected_decision": "HUMAN_REVIEW",
+      "expected_actions": [
+        "review_access_plan",
+        "draft_tenant_update"
+      ],
+      "expected_blocked": []
+    },
+    {
+      "id": "missing",
+      "description": "Synthetic regression: missing",
+      "asset_type": "office",
+      "equipment": "basement_sump",
+      "context": "wet_weather",
+      "inputs": {},
+      "expected_decision": "ABSTAIN",
+      "expected_actions": [],
+      "expected_blocked": []
+    }
+  ],
+  "unresolved_questions": [],
+  "contradictions": [],
+  "synthetic": true
+}

@@ -1,0 +1,12 @@
+services:
+  harvest:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      HARVEST_ENV: demo
+      HARVEST_LLM_PROVIDER: mock
+    volumes:
+      - harvest-data:/app/data
+volumes:
+  harvest-data:

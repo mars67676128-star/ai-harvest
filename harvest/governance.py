@@ -5,7 +5,7 @@ import json
 from .db import Database, audit, digest, dump, now_iso, pill_from_row
 from .engine import run_evaluations
 from .errors import DomainError
-from .models import Actor, CreatePill, PillContent
+from .models import Actor, CreatePill, EvaluationCase, PillContent
 
 
 def require_role(actor: Actor, *roles):
@@ -62,6 +62,94 @@ def check_parent(con, request: CreatePill):
             raise DomainError(
                 409, "RETIRED_PILL", "A retired identity cannot be reused as a new Pill"
             )
+
+
+def _check_materially_unchanged(
+    parent: EvaluationCase,
+    candidate: EvaluationCase,
+    new_input_keys: set[str],
+) -> str | None:
+    """Return case_id if materially changed, else None.
+
+    New input keys are permitted only when they correspond to InputSpecs
+    genuinely introduced by the candidate and not present in the parent.
+    """
+    if parent.id != candidate.id:
+        return candidate.id
+    if parent.asset_type != candidate.asset_type:
+        return candidate.id
+    if parent.equipment != candidate.equipment:
+        return candidate.id
+    if parent.context != candidate.context:
+        return candidate.id
+    if parent.expected_decision != candidate.expected_decision:
+        return candidate.id
+    if sorted(parent.expected_actions) != sorted(candidate.expected_actions):
+        return candidate.id
+    if sorted(parent.expected_blocked) != sorted(candidate.expected_blocked):
+        return candidate.id
+    # Existing input keys must retain their values.
+    for key, value in parent.inputs.items():
+        if candidate.inputs.get(key) != value:
+            return candidate.id
+    # Additional keys are allowed only if they are genuinely new candidate InputSpecs.
+    for key in candidate.inputs:
+        if key not in parent.inputs and key not in new_input_keys:
+            return candidate.id
+    return None
+
+
+def check_inherited_evaluations(con, candidate: PillContent, parent_version: str, pill_id: str):
+    """Enforce that a successor Pill does not weaken its parent's regression obligations."""
+    parent = read_pill(con, pill_id, parent_version)
+    parent_content = PillContent.model_validate(parent["content"])
+
+    parent_cases = {c.id: c for c in parent_content.evaluation}
+    candidate_cases = {c.id: c for c in candidate.evaluation}
+    parent_input_keys = {i.key for i in parent_content.inputs}
+    new_input_keys = {i.key for i in candidate.inputs} - parent_input_keys
+
+    for case_id in parent_cases:
+        if case_id not in candidate_cases:
+            raise DomainError(
+                409,
+                "INHERITED_REGRESSION_MISSING",
+                f"Inherited evaluation case '{case_id}' is missing from the candidate",
+            )
+        changed = _check_materially_unchanged(
+            parent_cases[case_id], candidate_cases[case_id], new_input_keys
+        )
+        if changed:
+            raise DomainError(
+                409,
+                "INHERITED_REGRESSION_MODIFIED",
+                f"Inherited evaluation case '{changed}' must not be materially changed",
+            )
+
+    # Run the parent's evaluation cases against the candidate content.
+    # Augment with values for any new required inputs that the candidate's cases provide.
+    candidate_inputs = {i.key: i for i in candidate.inputs}
+    augmented_cases = []
+    for cid, parent_case in parent_cases.items():
+        candidate_case = candidate_cases[cid]
+        merged_inputs = dict(parent_case.inputs)
+        for key in candidate_inputs:
+            if key not in merged_inputs and candidate_inputs[key].required:
+                if key in candidate_case.inputs:
+                    merged_inputs[key] = candidate_case.inputs[key]
+        augmented = parent_case.model_dump(mode="json")
+        augmented["inputs"] = dict(sorted(merged_inputs.items()))
+        augmented_cases.append(augmented)
+    inherited_only = PillContent.model_validate(
+        {**candidate.model_dump(mode="json"), "evaluation": augmented_cases}
+    )
+    report = run_evaluations(inherited_only)
+    if not report["passed"]:
+        raise DomainError(
+            409,
+            "INHERITED_REGRESSION_FAILED",
+            "Candidate content failed one or more inherited parent evaluation cases",
+        )
 
 
 def insert_pill(con, request: CreatePill, actor: Actor, event="PILL_CREATED"):
@@ -261,6 +349,8 @@ class Governance:
                     raise DomainError(
                         409, "EVALUATION_FAILED", "Release-time regression evaluation failed"
                     )
+                if pill["previous_version"]:
+                    check_inherited_evaluations(con, content, pill["previous_version"], pill_id)
                 req = CreatePill.model_validate({k: pill[k] for k in CreatePill.model_fields})
                 check_parent(con, req)
                 # Check exact dependencies and bounded graph before promotion.

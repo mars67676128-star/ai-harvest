@@ -307,7 +307,7 @@ def revised_operations(current: dict) -> PillContent:
         )
     )
     for test in data["evaluation"]:
-        if test["inputs"]:
+        if test["inputs"] is not None:
             test["inputs"]["drain_backflow"] = False
     data["evaluation"].append(
         evaluation(

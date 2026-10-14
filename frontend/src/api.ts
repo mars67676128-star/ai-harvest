@@ -72,6 +72,36 @@ export async function getPillVersion(pillId: string, version: string): Promise<P
   return request<PillVersion>(`/pills/${pillId}/versions/${version}`);
 }
 
+export async function getPillVersions(pillId: string): Promise<PillVersion[]> {
+  return request<PillVersion[]>(`/pills/${pillId}/versions`);
+}
+
+export interface AuditEntry {
+  sequence: number;
+  event: string;
+  entity_id: string;
+  actor: string;
+  created_at: string;
+  detail: Record<string, unknown>;
+}
+
+export interface AuditHistory {
+  items: AuditEntry[];
+  next_after: number;
+}
+
+export async function getAuditHistory(
+  entityId?: string,
+  after = 0,
+  limit = 100
+): Promise<AuditHistory> {
+  const params = new URLSearchParams();
+  if (entityId) params.set("entity_id", entityId);
+  params.set("after", String(after));
+  params.set("limit", String(limit));
+  return request<AuditHistory>(`/audit?${params.toString()}`);
+}
+
 export async function getCases(): Promise<CaseRecord[]> {
   return request<CaseRecord[]>("/cases");
 }

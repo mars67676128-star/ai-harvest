@@ -783,3 +783,66 @@ tr:last-child td { border-bottom: none; }
   font-family: var(--font-sans);
   font-weight: 500;
 }
+
+/* Lifecycle stepper */
+.lifecycle-stepper {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.lifecycle-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  position: relative;
+}
+
+.lifecycle-step:not(:last-child)::after {
+  content: "";
+  flex: 1;
+  height: 2px;
+  background: var(--border);
+  margin: 0 8px;
+}
+
+.lifecycle-step.done:not(:last-child)::after {
+  background: var(--green);
+}
+
+.lifecycle-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  border: 2px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.lifecycle-step.done .lifecycle-dot {
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.lifecycle-step.current .lifecycle-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.2);
+}
+
+.lifecycle-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.lifecycle-step.done .lifecycle-label {
+  color: var(--text);
+}
+
+.lifecycle-step.current .lifecycle-label {
+  color: var(--accent);
+}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { getHealth, setRole } from "./api";
 import { OperationalCase } from "./components/OperationalCase";
+import { IntelligencePills } from "./components/IntelligencePills";
 
 type View = "operational" | "pills" | "audit";
 
@@ -68,9 +69,7 @@ export default function App() {
 
       <main className="content">
         {view === "operational" && <OperationalCase />}
-        {view === "pills" && (
-          <div className="loading">Intelligence Pills registry — not implemented in this milestone.</div>
-        )}
+        {view === "pills" && <IntelligencePills />}
         {view === "audit" && (
           <div className="loading">Audit timeline — not implemented in this milestone.</div>
         )}

@@ -8,9 +8,12 @@ import type {
 import {
   getCases,
   getRecommendations,
+  getRecommendation,
   getPills,
   invokeCase,
   createCase,
+  recordDecision,
+  getRole,
 } from "../api";
 
 const OPS_ID = "asset.monsoon.triage";
@@ -275,6 +278,12 @@ export function OperationalCase() {
           rec={selectedRec}
           opsPill={opsPill}
           tenantPill={tenantPill}
+          onDecisionRecorded={(updated) => {
+            setSelectedRec(updated);
+            setRecommendations((prev) =>
+              prev.map((r) => (r.id === updated.id ? updated : r))
+            );
+          }}
         />
       )}
     </div>
@@ -287,10 +296,12 @@ function RecommendationHierarchy({
   rec,
   opsPill,
   tenantPill,
+  onDecisionRecorded,
 }: {
   rec: RecommendationRecord;
   opsPill?: PillVersion;
   tenantPill?: PillVersion;
+  onDecisionRecorded: (updated: RecommendationRecord) => void;
 }) {
   const { result, capabilities, observations, ai_explanation } = rec;
 
@@ -366,7 +377,7 @@ function RecommendationHierarchy({
                     <tr>
                       <th>Action</th>
                       <th>Description</th>
-                      <th>Human Approval</th>
+                      <th>Human Authorization</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -670,56 +681,12 @@ function RecommendationHierarchy({
 
       {/* Step 6: Human Decision Area */}
       <HierarchyStep number={6} label="Accountable Human Decision Area">
-        <div className="decision-area">
-          <div className="decision-area-header">
-            <span>Human Decision Required</span>
-          </div>
-          {rec.human_decision ? (
-            <div className="kv kv-prominent">
-              <div>
-                <dt>Decision</dt>
-                <dd>{rec.human_decision.decision}</dd>
-              </div>
-              <div>
-                <dt>Note</dt>
-                <dd>{rec.human_decision.note}</dd>
-              </div>
-              <div>
-                <dt>Actor</dt>
-                <dd>{rec.human_decision.actor}</dd>
-              </div>
-            </div>
-          ) : (
-            <div className="text-dim" style={{ fontSize: 14 }}>
-              No human decision recorded yet. This recommendation requires escalation —
-              routine approval is blocked by the system.
-            </div>
-          )}
-          {rec.outcome && (
-            <div className="mt-16">
-              <div className="hierarchy-label">Outcome</div>
-              <div className="kv kv-prominent">
-                <div>
-                  <dt>Summary</dt>
-                  <dd>{rec.outcome.summary}</dd>
-                </div>
-                <div>
-                  <dt>Resolved</dt>
-                  <dd>{String(rec.outcome.resolved)}</dd>
-                </div>
-              </div>
-            </div>
-          )}
-          {/* Technical metadata */}
-          {rec.human_decision && (
-            <div className="mt-8 kv kv-tech">
-              <div>
-                <dt>Execution Allowed</dt>
-                <dd>{String(rec.human_decision.execution_allowed)}</dd>
-              </div>
-            </div>
-          )}
-        </div>
+        <HumanDecisionArea
+          rec={rec}
+          isEscalation={isEscalation}
+          escalationRoles={escalationRoles}
+          onDecisionRecorded={onDecisionRecorded}
+        />
       </HierarchyStep>
 
       {/* AI Explanation (non-authoritative) */}
@@ -741,6 +708,162 @@ function RecommendationHierarchy({
               <div style={{ fontSize: 14 }}>
                 <strong>Uncertainty:</strong> {ai_explanation.uncertainty}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Human Decision Area Component ---
+
+const DEFAULT_ESCALATION_NOTE =
+  "Escalated to Duty Facilities Engineer and Tenant Duty Manager for coordinated response.";
+
+function HumanDecisionArea({
+  rec,
+  isEscalation,
+  escalationRoles,
+  onDecisionRecorded,
+}: {
+  rec: RecommendationRecord;
+  isEscalation: boolean;
+  escalationRoles: string[];
+  onDecisionRecorded: (updated: RecommendationRecord) => void;
+}) {
+  const [note, setNote] = useState(DEFAULT_ESCALATION_NOTE);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const showRecordAction = isEscalation && !rec.human_decision;
+  const isOperator = getRole() === "operator";
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await recordDecision(rec.id, "escalate", note);
+      // Reload the recommendation from the backend to get the persisted human_decision
+      const updated = await getRecommendation(rec.id);
+      onDecisionRecorded(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="decision-area">
+      <div className="decision-area-header">
+        <span>{rec.human_decision ? "Escalation Recorded" : "Human Decision Required"}</span>
+      </div>
+
+      {rec.human_decision ? (
+        // --- Recorded state ---
+        <div>
+          <div className="flex gap-8 mb-16 flex-wrap">
+            <span className="badge badge-amber">ESCALATED</span>
+            <span className="no-exec-badge">Execution remains disabled</span>
+          </div>
+          <div className="kv kv-prominent">
+            <div>
+              <dt>Decision</dt>
+              <dd>Escalated</dd>
+            </div>
+            <div>
+              <dt>Accountable Actor</dt>
+              <dd>{rec.human_decision.actor}</dd>
+            </div>
+            <div>
+              <dt>Note</dt>
+              <dd>{rec.human_decision.note}</dd>
+            </div>
+          </div>
+          <div className="mt-8 kv kv-tech">
+            <div>
+              <dt>Execution Allowed</dt>
+              <dd>{String(rec.human_decision.execution_allowed)}</dd>
+            </div>
+            <div>
+              <dt>Raw Decision</dt>
+              <dd>{rec.human_decision.decision}</dd>
+            </div>
+          </div>
+        </div>
+      ) : showRecordAction ? (
+        // --- Pending escalation state ---
+        <div>
+          <div className="text-dim mb-16" style={{ fontSize: 14 }}>
+            This recommendation requires escalation. Routine approval is blocked
+            by the system. Record the escalation to complete the audit trail.
+          </div>
+
+          {escalationRoles.length > 0 && (
+            <div className="mb-16">
+              <div className="hierarchy-label">Escalate To</div>
+              <div className="flex gap-8 flex-wrap mt-8">
+                {escalationRoles.map((role) => (
+                  <span key={role} className="escalation-role">
+                    {role}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!isOperator && (
+            <div className="callout callout-warning mb-16">
+              Operator role required to record an operational decision.
+              Current role: <strong>{getRole()}</strong>.
+            </div>
+          )}
+
+          <div className="mb-16">
+            <div className="hierarchy-label">Operator Note</div>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={3}
+              className="escalation-note-input"
+              placeholder="Enter escalation note..."
+              disabled={submitting || !isOperator}
+            />
+          </div>
+
+          {error && (
+            <div className="error-box mb-16">
+              <strong>Failed to record escalation:</strong> {error}
+            </div>
+          )}
+
+          <button
+            className="btn btn-primary"
+            onClick={handleSubmit}
+            disabled={submitting || !note.trim() || !isOperator}
+          >
+            {submitting ? "Recording..." : "Record Escalation"}
+          </button>
+        </div>
+      ) : (
+        // --- Non-escalation pending state ---
+        <div className="text-dim" style={{ fontSize: 14 }}>
+          No human decision recorded yet.
+        </div>
+      )}
+
+      {rec.outcome && (
+        <div className="mt-16">
+          <div className="hierarchy-label">Outcome</div>
+          <div className="kv kv-prominent">
+            <div>
+              <dt>Summary</dt>
+              <dd>{rec.outcome.summary}</dd>
+            </div>
+            <div>
+              <dt>Resolved</dt>
+              <dd>{String(rec.outcome.resolved)}</dd>
             </div>
           </div>
         </div>

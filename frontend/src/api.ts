@@ -110,3 +110,15 @@ export async function invokeCase(
     include_ai_explanation: includeAiExplanation,
   });
 }
+
+export async function recordDecision(
+  recommendationId: string,
+  decision: "approve" | "reject" | "correct" | "escalate",
+  note: string
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(
+    `/recommendations/${recommendationId}/decision`,
+    "POST",
+    { decision, note }
+  );
+}

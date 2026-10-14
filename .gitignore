@@ -11,3 +11,6 @@ __pycache__/
 *.db-wal
 artifacts/
 *.log
+node_modules/
+dist/
+*.tsbuildinfo

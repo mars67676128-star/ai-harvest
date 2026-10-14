@@ -57,7 +57,7 @@ def test_rejection_keeps_production_and_history(approved):
     post(approved, "submit", "expert", "1.1.0")
     assert post(approved, "reject", "reviewer", "1.1.0").status_code == 200
     assert call(approved, "GET", f"/pills/{OPS_ID}/versions/1.0.0") == original
-    events = call(approved, "GET", "/audit")["items"]
+    events = call(approved, "GET", "/audit", "approver")["items"]
     assert any(e["event"] == "PILL_REJECTED" for e in events)
 
 

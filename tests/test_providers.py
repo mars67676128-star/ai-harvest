@@ -41,7 +41,7 @@ def test_failed_extraction_does_not_create_pill(client):
     assert response.status_code == 502
     assert "secret-key" not in response.text
     assert call(client, "GET", "/pills") == []
-    assert call(client, "GET", f"/captures/{capture['id']}")["extraction"] is None
+    assert call(client, "GET", f"/captures/{capture['id']}", "expert")["extraction"] is None
 
 
 def test_unknown_interview_is_not_falsely_extracted_offline(client):
@@ -133,7 +133,10 @@ def test_feedback_failure_keeps_original_and_feedback(approved):
     )
     assert response.status_code == 502
     assert call(approved, "GET", f"/pills/{OPS_ID}/versions/1.0.0") == original
-    assert call(approved, "GET", f"/feedback/{feedback['id']}")["correction"] == BACKFLOW_TEXT
+    assert (
+        call(approved, "GET", f"/feedback/{feedback['id']}", "operator")["correction"]
+        == BACKFLOW_TEXT
+    )
     assert len(call(approved, "GET", "/pills")) == 1
 
 

@@ -133,7 +133,9 @@ def run(client, seed_only=False):
         original["content_hash"] == unchanged["content_hash"] and unchanged["status"] == "APPROVED"
     )
     print("  Feedback created DRAFT v1.1.0. Approved v1.0.0 content and hash remain unchanged.")
-    diff = call(client, "GET", f"/pills/{OPS_ID}/diff?from_version=1.0.0&to_version=1.1.0")
+    diff = call(
+        client, "GET", f"/pills/{OPS_ID}/diff?from_version=1.0.0&to_version=1.1.0", "expert"
+    )
     print("  Reviewable changes: " + ", ".join(c["path"] for c in diff["changes"]))
     # The same flat-trend/backflow observation has different governed behaviour across releases.
     new_case = call(
@@ -176,7 +178,7 @@ def run(client, seed_only=False):
             "before_revision": before,
             "after_revision": after,
             "history": historical,
-            "audit": call(client, "GET", "/audit?limit=500"),
+            "audit": call(client, "GET", "/audit?limit=500", "reviewer"),
         }
     )
     return report

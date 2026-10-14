@@ -13,6 +13,53 @@ def require_role(actor: Actor, *roles):
         raise DomainError(403, "FORBIDDEN", f"Requires one of these roles: {', '.join(roles)}")
 
 
+def validate_governance_authority(
+    request: CreatePill, actor: Actor, known_actors: dict[str, Actor]
+):
+    """Validate that owner and reviewers are known, correctly roled, and separated from author."""
+    owner = known_actors.get(request.owner)
+    if not owner:
+        raise DomainError(
+            403, "UNKNOWN_AUTHORITY", f"Owner '{request.owner}' is not a configured actor"
+        )
+    if "approver" not in owner.roles:
+        raise DomainError(
+            403,
+            "INVALID_AUTHORITY_ROLE",
+            f"Owner '{request.owner}' does not have the approver role",
+        )
+
+    seen = set()
+    for reviewer_id in request.reviewers:
+        if reviewer_id in seen:
+            raise DomainError(
+                403,
+                "AUTHORITY_SEPARATION_REQUIRED",
+                f"Duplicate reviewer '{reviewer_id}'",
+            )
+        seen.add(reviewer_id)
+        reviewer = known_actors.get(reviewer_id)
+        if not reviewer:
+            raise DomainError(
+                403,
+                "UNKNOWN_AUTHORITY",
+                f"Reviewer '{reviewer_id}' is not a configured actor",
+            )
+        if "reviewer" not in reviewer.roles:
+            raise DomainError(
+                403,
+                "INVALID_AUTHORITY_ROLE",
+                f"Reviewer '{reviewer_id}' does not have the reviewer role",
+            )
+
+    if actor.id == request.owner:
+        raise DomainError(403, "AUTHORITY_SEPARATION_REQUIRED", "Author cannot be the owner")
+    if actor.id in request.reviewers:
+        raise DomainError(403, "AUTHORITY_SEPARATION_REQUIRED", "Author cannot be a reviewer")
+    if request.owner in request.reviewers:
+        raise DomainError(403, "AUTHORITY_SEPARATION_REQUIRED", "Owner cannot be a reviewer")
+
+
 def version_key(version):
     return tuple(int(i) for i in version.split("."))
 
@@ -232,11 +279,13 @@ def resolve_pills(con, pill_ids):
 
 
 class Governance:
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, known_actors: dict[str, Actor] | None = None):
         self.db = db
+        self.known_actors = known_actors or {}
 
     def create(self, request: CreatePill, actor: Actor):
         require_role(actor, "expert")
+        validate_governance_authority(request, actor, self.known_actors)
         with self.db.transaction() as con:
             return insert_pill(
                 con,

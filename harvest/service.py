@@ -5,7 +5,14 @@ from datetime import datetime, timedelta, timezone
 from .db import Database, add_object, audit, digest, object_from_row
 from .engine import combine, evaluate
 from .errors import DomainError
-from .governance import Governance, insert_pill, read_pill, require_role, resolve_pills
+from .governance import (
+    Governance,
+    insert_pill,
+    read_pill,
+    require_role,
+    resolve_pills,
+    validate_governance_authority,
+)
 from .models import (
     Actor,
     CaptureRequest,
@@ -44,9 +51,12 @@ def child(con, parent_id, kind):
 
 
 class Service:
-    def __init__(self, db: Database, provider: LLMProvider):
+    def __init__(
+        self, db: Database, provider: LLMProvider, known_actors: dict[str, Actor] | None = None
+    ):
         self.db, self.provider = db, provider
-        self.governance = Governance(db)
+        self.known_actors = known_actors or {}
+        self.governance = Governance(db, self.known_actors)
 
     def get(self, identifier, kind):
         with self.db.connection() as con:
@@ -142,6 +152,7 @@ class Service:
                 content=extraction["content"],
                 change_reason=f"Compiled from capture:{capture_id}; extraction:{extraction['id']}",
             )
+            validate_governance_authority(req, actor, self.known_actors)
             return insert_pill(con, req, actor)
 
     def create_case(self, request: CaseInput, actor):
@@ -404,6 +415,7 @@ class Service:
             previous_version=current["version"],
             change_reason=feedback["correction"],
         )
+        validate_governance_authority(req, actor, self.known_actors)
         with self.db.transaction() as con:
             candidate = insert_pill(con, req, actor, "CANDIDATE_REVISION_CREATED")
             audit(

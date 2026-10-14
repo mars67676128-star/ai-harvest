@@ -27,7 +27,9 @@ def test_complete_api_driven_demo(client):
         "CANDIDATE_REVISION_CREATED",
         "PILL_SUPERSEDED",
     } <= events
-    previous_rec = call(client, "GET", f"/recommendations/{report['before_revision']['id']}")
+    previous_rec = call(
+        client, "GET", f"/recommendations/{report['before_revision']['id']}", "operator"
+    )
     assert previous_rec["capabilities"][0]["version"] == "1.0.0"
     assert previous_rec["result"]["decision"] == "HUMAN_REVIEW"
 

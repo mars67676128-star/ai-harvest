@@ -43,6 +43,12 @@ class Settings:
             raise ValueError("Live providers require HARVEST_LLM_API_KEY and HARVEST_LLM_MODEL")
         if self.provider != "mock" and not self.base_url.startswith("https://"):
             raise ValueError("Live provider transport must use HTTPS")
+        # Detect duplicate configured actor IDs deterministically
+        seen_ids = set()
+        for actor in self.tokens.values():
+            if actor.id in seen_ids:
+                raise ValueError(f"Duplicate configured actor ID: {actor.id}")
+            seen_ids.add(actor.id)
 
     @classmethod
     def from_env(cls):

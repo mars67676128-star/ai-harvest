@@ -17,6 +17,7 @@ from .config import Settings
 from .db import Database
 from .errors import DomainError
 from .fixtures import ELICITATION
+from .governance import require_role
 from .models import (
     Actor,
     CaptureRequest,
@@ -43,7 +44,10 @@ bearer = HTTPBearer(auto_error=False)
 
 def create_app(settings: Settings | None = None, provider=None):
     settings = settings or Settings.from_env()
-    service = Service(Database(settings.database), provider or make_provider(settings))
+    known_actors = {actor.id: actor for actor in settings.tokens.values()}
+    service = Service(
+        Database(settings.database), provider or make_provider(settings), known_actors
+    )
     app = FastAPI(
         title="AI HARVEST",
         version="0.1.0",
@@ -158,6 +162,7 @@ def create_app(settings: Settings | None = None, provider=None):
 
     @app.get(prefix + "/captures/{capture_id}", tags=["capture"])
     def get_capture(capture_id: str, actor: CurrentActor):
+        require_role(actor, "expert", "reviewer", "approver")
         return service.get(capture_id, "capture")
 
     @app.post(prefix + "/captures/{capture_id}/extract", tags=["capture"])
@@ -197,6 +202,7 @@ def create_app(settings: Settings | None = None, provider=None):
 
     @app.get(prefix + "/pills/{pill_id}/diff", tags=["governance"])
     def diff(pill_id: str, from_version: str, to_version: str, actor: CurrentActor):
+        require_role(actor, "expert", "reviewer", "approver")
         return service.governance.diff(pill_id, from_version, to_version)
 
     def register_transition(operation):
@@ -219,10 +225,12 @@ def create_app(settings: Settings | None = None, provider=None):
 
     @app.get(prefix + "/cases", response_model=list[CaseRecord], tags=["runtime"])
     def cases(actor: CurrentActor):
+        require_role(actor, "operator", "approver")
         return service.list_objects("case")
 
     @app.get(prefix + "/cases/{case_id}", response_model=CaseRecord, tags=["runtime"])
     def get_case(case_id: str, actor: CurrentActor):
+        require_role(actor, "operator", "approver")
         return service.get(case_id, "case")
 
     @app.post(
@@ -240,12 +248,14 @@ def create_app(settings: Settings | None = None, provider=None):
         tags=["runtime"],
     )
     def recommendation(recommendation_id: str, actor: CurrentActor):
+        require_role(actor, "operator", "approver")
         return service.get(recommendation_id, "recommendation")
 
     @app.get(
         prefix + "/recommendations", response_model=list[RecommendationRecord], tags=["runtime"]
     )
     def recommendations(actor: CurrentActor):
+        require_role(actor, "operator", "approver")
         return service.list_objects("recommendation")
 
     @app.post(
@@ -277,6 +287,7 @@ def create_app(settings: Settings | None = None, provider=None):
 
     @app.get(prefix + "/feedback/{feedback_id}", tags=["learning"])
     def get_feedback(feedback_id: str, actor: CurrentActor):
+        require_role(actor, "expert", "operator", "reviewer", "approver")
         return service.get(feedback_id, "feedback")
 
     @app.get(prefix + "/audit", tags=["audit"])
@@ -286,6 +297,7 @@ def create_app(settings: Settings | None = None, provider=None):
         after: Annotated[int, Query(ge=0)] = 0,
         limit: Annotated[int, Query(ge=1, le=500)] = 100,
     ):
+        require_role(actor, "reviewer", "approver")
         return service.governance.audit_history(entity_id, after, limit)
 
     return app

@@ -266,6 +266,11 @@ export function LiveCase({
       </div>
 
       {/* Plain-English summary */}
+      <div className="scenario-context">
+        <b>The situation.</b> Harbour Exchange is a fictional office tower. During heavy rain, water
+        drains into a pit in the basement (a <i>sump</i>) and a pump pushes it out. If the pump stops
+        working, the basement floods — damaging equipment and blocking the way tenants get in and out.
+      </div>
       <div className="plain-english">
         The basement pump shows a green "running" light, but water is still rising at 3&nbsp;mm/min.
         A running pump does not prove effective drainage. The alternative access route has not been

@@ -6,6 +6,7 @@ import { DomainIcon } from "./DomainIcon";
 import { getFeedbackIds, candidateForFeedback, getRememberedRejection, setActiveRec } from "../lib/demoState";
 
 type Go = {
+  onGoToHowItWorks: () => void;
   onGoToLiveCase: () => void;
   onGoToEvolution: (recId?: string) => void;
   onGoToPill: (pillId: string) => void;
@@ -28,12 +29,6 @@ const ROLE_INTRO: Record<string, string> = {
   viewer: "You can read every pill and decision, but cannot change anything.",
 };
 
-const STEPS = [
-  { n: 1, title: "Capture", body: "Experts' judgement is captured through real cases, not questionnaires.", who: "Expert" },
-  { n: 2, title: "Govern", body: "It becomes an Intelligence Pill — versioned, tested, independently reviewed and approved.", who: "Reviewer · Approver" },
-  { n: 3, title: "Apply", body: "Pills support live decisions with deterministic rules. AI explains — it never decides or acts.", who: "Operator" },
-  { n: 4, title: "Learn", body: "Outcomes feed back. AI proposes a revision; humans review the diff before anything changes.", who: "Everyone" },
-];
 
 function humanise(s: string) {
   const t = s.replace(/^demo[-_]/, "").replace(/[_-]+/g, " ").toLowerCase();
@@ -62,7 +57,7 @@ const EVENT_TEXT: Record<string, string> = {
   KNOWLEDGE_CAPTURED: "captured an expert interview", KNOWLEDGE_EXTRACTED: "extracted knowledge from an interview",
 };
 
-export function Home({ onGoToLiveCase, onGoToEvolution, onGoToPill }: Go) {
+export function Home({ onGoToHowItWorks, onGoToLiveCase, onGoToEvolution, onGoToPill }: Go) {
   const role = getRole();
   const [versions, setVersions] = useState<PillVersion[]>([]);
   const [recs, setRecs] = useState<RecommendationRecord[] | null>(null);
@@ -190,23 +185,8 @@ export function Home({ onGoToLiveCase, onGoToEvolution, onGoToPill }: Go) {
             </ul>
           )}
 
-          <h2 className="home-h2 mt-24">How AI HARVEST works</h2>
-          <ol className="how-steps">
-            {STEPS.map((s) => (
-              <li key={s.n} className="how-step">
-                <span className="how-n">{s.n}</span>
-                <div>
-                  <div className="how-title">{s.title} <span className="how-who">{s.who}</span></div>
-                  <div className="how-body">{s.body}</div>
-                </div>
-              </li>
-            ))}
-          </ol>
-          <div className="how-legend">
-            <span><i className="lg lg-teal" />Approved organisational knowledge</span>
-            <span><i className="lg lg-ai" />AI-generated, never authoritative</span>
-            <span><i className="lg lg-amber" />Needs a person's sign-off</span>
-            <span><i className="lg lg-red" />Blocked</span>
+          <div className="how-teaser" onClick={onGoToHowItWorks}>
+            New here? <b>See how AI HARVEST works →</b>
           </div>
         </section>
 

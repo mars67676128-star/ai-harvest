@@ -5,8 +5,9 @@ import { LiveCase } from "./components/LiveCase";
 import { IntelligencePills } from "./components/IntelligencePills";
 import { KnowledgeEvolution } from "./components/KnowledgeEvolution";
 import { Home } from "./components/Home";
+import { HowItWorks } from "./components/HowItWorks";
 
-type View = "home" | "operational" | "pills" | "evolution";
+type View = "home" | "how" | "operational" | "pills" | "evolution";
 
 const ROLE_STORAGE_KEY = "ai-harvest-role";
 
@@ -122,6 +123,13 @@ export default function App() {
               <HomeIcon />
               Home
             </button>
+            <button
+              className={`sidebar-item ${view === "how" ? "active" : ""}`}
+              onClick={() => setView("how")}
+            >
+              <HowIcon />
+              How it works
+            </button>
           </div>
           <div className="sidebar-group">
             <div className="sidebar-group-label">Operations</div>
@@ -159,9 +167,11 @@ export default function App() {
         </nav>
 
         <main className="app-content">
+          {view === "how" && <HowItWorks onStart={() => setView("operational")} />}
           {view === "home" && (
             <Home
               key={`home-${role}`}
+              onGoToHowItWorks={() => setView("how")}
               onGoToLiveCase={() => setView("operational")}
               onGoToEvolution={(recId?: string) => {
                 setEvolutionRecId(recId ?? null);
@@ -243,6 +253,16 @@ function HomeIcon() {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 10.5 12 3l9 7.5" />
       <path d="M5 9.5V21h14V9.5" />
+    </svg>
+  );
+}
+
+function HowIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14" />
+      <path d="M12 17h.01" />
     </svg>
   );
 }

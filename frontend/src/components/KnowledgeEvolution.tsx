@@ -754,7 +754,7 @@ function DiffStep({
             let title = rawTitles[i] || id;
             // Disambiguate when multiple cases share the same title
             if ((titleCounts.get(title) ?? 0) > 1) title = `${title} (${id.replace(/_/g, " ")})`;
-            const decisionLabel = expectedDecision === "ESCALATE" ? "Escalate" : expectedDecision === "HUMAN_REVIEW" ? "Human review" : "Abstain — not enough data";
+            const decisionLabel = expectedDecision === "ESCALATE" ? "Escalate" : expectedDecision === "HUMAN_REVIEW" ? "Needs review" : "Abstain — not enough data";
             return (
               <div key={i} className={`regression-row ${!isNew ? "locked" : ""}`}>
                 <div className="regression-row-header">

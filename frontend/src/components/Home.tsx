@@ -56,8 +56,8 @@ const EVENT_TEXT: Record<string, string> = {
   EXPERT_REVIEWED: "recorded an independent review", PILL_VALIDATED: "ran regression validation",
   PILL_APPROVED: "approved a release", PILL_REJECTED: "rejected a candidate", PILL_SUPERSEDED: "superseded a version",
   PILL_DEPRECATED: "deprecated a version", FEEDBACK_SUBMITTED: "submitted outcome feedback",
-  DECISION_RECORDED: "recorded a human decision", OUTCOME_RECORDED: "recorded an operational outcome",
-  HUMAN_DECISION: "recorded a human decision", RECOMMENDATION_GENERATED: "generated a recommendation",
+  DECISION_RECORDED: "recorded a decision", OUTCOME_RECORDED: "recorded an operational outcome",
+  HUMAN_DECISION: "recorded a decision", RECOMMENDATION_GENERATED: "generated a recommendation",
   CASE_CREATED: "opened an operational case", PILL_INVOKED: "applied a pill to a case",
   KNOWLEDGE_CAPTURED: "captured an expert interview", KNOWLEDGE_EXTRACTED: "extracted knowledge from an interview",
 };
@@ -108,7 +108,7 @@ export function Home({ onGoToLiveCase, onGoToEvolution, onGoToPill }: Go) {
   if (role === "operator" || role === "approver") {
     for (const r of recs ?? []) {
       if (r.result.decision === "ESCALATE" && !r.human_decision && role === "operator") {
-        tasks.push({ key: `dec-${r.id}`, tone: "warning", title: "Escalation awaiting a human decision",
+        tasks.push({ key: `dec-${r.id}`, tone: "warning", title: "Escalation awaiting your decision",
           detail: `Assessment at ${r.created_at.slice(11, 16)} UTC — AI HARVEST will not act on its own.`,
           cta: "Open case", go: onGoToLiveCase });
       } else if (r.human_decision && !r.outcome && role === "operator") {
@@ -205,7 +205,7 @@ export function Home({ onGoToLiveCase, onGoToEvolution, onGoToPill }: Go) {
           <div className="how-legend">
             <span><i className="lg lg-teal" />Approved organisational knowledge</span>
             <span><i className="lg lg-ai" />AI-generated, never authoritative</span>
-            <span><i className="lg lg-amber" />Needs a human</span>
+            <span><i className="lg lg-amber" />Needs a person's sign-off</span>
             <span><i className="lg lg-red" />Blocked</span>
           </div>
         </section>

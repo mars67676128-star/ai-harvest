@@ -905,7 +905,7 @@ function EvidenceProvenance({ pill, defaultOpen }: { pill: PillVersion; defaultO
 
 const DECISION_LABELS: Record<string, string> = {
   ESCALATE: "Escalate",
-  HUMAN_REVIEW: "Human Review",
+  HUMAN_REVIEW: "Needs review",
   ABSTAIN: "Abstain — not enough data",
 };
 

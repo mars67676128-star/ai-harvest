@@ -359,7 +359,7 @@ function RecommendationDetail({
 
   const decisionBadge = (d: string) => {
     if (d === "ESCALATE") return <span className="badge badge-warning">Escalate</span>;
-    if (d === "HUMAN_REVIEW") return <span className="badge badge-info">Human Review</span>;
+    if (d === "HUMAN_REVIEW") return <span className="badge badge-info">Needs review</span>;
     return <span className="badge badge-neutral">Abstain</span>;
   };
 
@@ -631,7 +631,7 @@ function RecommendationDetail({
       {/* Human Decision Area */}
       <div className="card">
         <div className="card-header">
-          <span className="card-title">Accountable Human Decision</span>
+          <span className="card-title">Your decision</span>
         </div>
         <div className="card-body">
           <HumanDecisionArea
@@ -724,7 +724,7 @@ function HumanDecisionArea({
   return (
     <div className="decision-area">
       <div className="decision-area-header">
-        {rec.human_decision ? "Escalation Recorded" : "Human Decision Required"}
+        {rec.human_decision ? "Escalation Recorded" : "Your Decision Required"}
       </div>
 
       {rec.human_decision ? (
@@ -803,7 +803,7 @@ function HumanDecisionArea({
           </button>
         </div>
       ) : (
-        <div className="text-muted">No human decision recorded yet.</div>
+        <div className="text-muted">No decision recorded yet.</div>
       )}
 
       {rec.outcome && (

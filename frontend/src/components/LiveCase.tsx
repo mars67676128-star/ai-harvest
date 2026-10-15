@@ -144,7 +144,13 @@ export function LiveCase({
       setRecommendations(rs);
       setPills(ps);
       if (rs.length > 0 && !selectedRec) {
-        setSelectedRec(rs[rs.length - 1]);
+        // Fetch the hydrated single-item version (list endpoint doesn't include human_decision/outcome)
+        try {
+          const hydrated = await getRecommendation(rs[rs.length - 1].id);
+          setSelectedRec(hydrated);
+        } catch {
+          setSelectedRec(rs[rs.length - 1]);
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

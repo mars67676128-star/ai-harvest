@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { getHealth, setRole, getPills, getRecommendations } from "./api";
+import { getHealth, setRole, getPills, getRecommendations, getRecommendation } from "./api";
 import type { PillVersion, RecommendationRecord } from "./types";
 import { LiveCase } from "./components/LiveCase";
 import { IntelligencePills } from "./components/IntelligencePills";
@@ -28,7 +28,13 @@ export default function App() {
   // Load pills and recommendations for sidebar badges
   useEffect(() => {
     getPills().then(setPills).catch(() => {});
-    getRecommendations().then(setRecommendations).catch(() => {});
+    // Hydrate each recommendation individually — the list endpoint doesn't include human_decision/outcome
+    getRecommendations()
+      .then((all) =>
+        Promise.all(all.map((r) => getRecommendation(r.id).catch(() => r)))
+      )
+      .then(setRecommendations)
+      .catch(() => {});
   }, [role]);
 
   const handleRoleChange = useCallback((r: string) => {

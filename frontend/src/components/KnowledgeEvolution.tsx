@@ -87,8 +87,13 @@ export function KnowledgeEvolution({
         // If forbidden, we'll get the specific one from the candidate pill's audit history
         try {
           const allRecs = await getRecommendations();
-          setRecs(allRecs);
-          target = allRecs.find((r) => r.human_decision && !r.outcome) ?? allRecs[allRecs.length - 1] ?? null;
+          // List endpoint doesn't hydrate human_decision/outcome — fetch the hydrated version
+          const candidates = await Promise.all(
+            allRecs.map((r) => getRecommendation(r.id).catch(() => r))
+          );
+          setRecs(candidates);
+          const hydrated = candidates.find((r) => r.human_decision && !r.outcome) ?? candidates[candidates.length - 1] ?? null;
+          target = hydrated;
         } catch {
           // Fall back: if there's a candidate pill, find the recommendation from its evidence
           const vers = await getPillVersions(OPS_ID);

@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
+import { DomainIcon } from "./DomainIcon";
+import { setActiveRec } from "../lib/demoState";
 import type {
   CaseRecord,
   RecommendationRecord,
@@ -177,6 +179,7 @@ export function LiveCase({
     try {
       const newCase = await createCase(buildCaseBody());
       const rec = await invokeCase(newCase.id, [OPS_ID, TENANT_ID], true);
+      setActiveRec(rec.id); // Knowledge Evolution follows the newest assessment
       setSelectedRec(rec);
       setCases((prev) => [...prev, newCase]);
       setRecommendations((prev) => [...prev, rec]);
@@ -423,7 +426,7 @@ function RecommendationDetail({
       {showConflict && (
         <div className="conflict-card">
           <div className="conflict-side conflict-side-proposes">
-            <div className="conflict-domain">Asset Operations proposes</div>
+            <div className="conflict-domain"><DomainIcon domain="Asset Operations" size={26} /> Asset Operations proposes</div>
             <div className="conflict-action">Review access plan</div>
             <div className="conflict-reason">
               The pill recommends reviewing the alternative access route to keep tenants safe.
@@ -431,7 +434,7 @@ function RecommendationDetail({
           </div>
           <div className="conflict-divider">→</div>
           <div className="conflict-side conflict-side-blocks">
-            <div className="conflict-domain">Tenant Experience blocks</div>
+            <div className="conflict-domain"><DomainIcon domain="Tenant Experience" size={26} /> Tenant Experience blocks</div>
             <div className="conflict-action">Access plan blocked</div>
             <div className="conflict-reason">
               The alternative route is unverified. Tenant Experience blocks the access plan until
@@ -708,6 +711,7 @@ function HumanDecisionArea({
     setError(null);
     try {
       await recordDecision(rec.id, "escalate", note);
+      setActiveRec(rec.id);
       const updated = await getRecommendation(rec.id);
       onDecisionRecorded(updated);
     } catch (e) {

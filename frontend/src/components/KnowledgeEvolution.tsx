@@ -15,7 +15,24 @@ import {
   proposeCandidate,
   transitionPill,
   getRole,
+  getFeedback,
+  getAuditHistory,
 } from "../api";
+import {
+  getActiveRec,
+  setActiveRec,
+  cacheRec,
+  getCachedRec,
+  forgetRec,
+  getFeedbackIds,
+  addFeedbackId,
+  setFeedbackIds,
+  rememberRejection,
+  getRememberedRejection,
+  semverCmp,
+  nextCandidateVersion,
+  candidateForFeedback,
+} from "../lib/demoState";
 
 const OPS_ID = "asset.monsoon.triage";
 
@@ -29,14 +46,6 @@ const STEPS = [
 ] as const;
 
 type StepKey = (typeof STEPS)[number]["key"];
-
-interface StepState {
-  outcomeDone: boolean;
-  feedbackDone: boolean;
-  proposalDone: boolean;
-  diffDone: boolean;
-  testsDone: boolean;
-}
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
@@ -55,6 +64,22 @@ function capitaliseActor(actor: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
+async function loadRec(id: string): Promise<RecommendationRecord | null> {
+  try {
+    const r = await getRecommendation(id);
+    cacheRec(r);
+    return r;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes("NOT_FOUND")) {
+      forgetRec(id); // fresh database — drop stale pointers
+      return null;
+    }
+    // This role cannot read recommendations (expert/reviewer): use the copy last loaded here.
+    return getCachedRec<RecommendationRecord>(id);
+  }
+}
+
 // --- Main component ---
 
 export function KnowledgeEvolution({
@@ -62,7 +87,9 @@ export function KnowledgeEvolution({
   onGoToPill,
   onRefreshPills,
   onGoToLiveCase,
+  onSelectRec,
 }: {
+  onSelectRec?: (recId: string) => void;
   preselectedRecId?: string | null;
   onGoToPill?: (pillId: string) => void;
   onRefreshPills?: () => void;
@@ -76,127 +103,81 @@ export function KnowledgeEvolution({
   const [diff, setDiff] = useState<DiffResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [stepDone, setStepDone] = useState<StepState>({
-    outcomeDone: false,
-    feedbackDone: false,
-    proposalDone: false,
-    diffDone: false,
-    testsDone: false,
-  });
+  const [feedbackId, setFeedbackId] = useState<string | null>(null);
 
+  // Rebuild the whole flow from backend state (plus browser-side pointers).
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      // 1. Pill versions — readable by every role.
+      const vers = await getPillVersions(OPS_ID);
+      setPillVersions(vers);
+
+      // 2. Which recommendation are we following?
       let target: RecommendationRecord | null = null;
-      if (preselectedRecId) {
-        target = await getRecommendation(preselectedRecId);
-      } else {
-        // Try to get all recommendations (operator/approver only)
-        // If forbidden, we'll get the specific one from the candidate pill's audit history
-        try {
-          const allRecs = await getRecommendations();
-          // List endpoint doesn't hydrate human_decision/outcome — fetch the hydrated version
-          const candidates = await Promise.all(
-            allRecs.map((r) => getRecommendation(r.id).catch(() => r))
-          );
-          setRecs(candidates);
-          const hydrated = candidates.find((r) => r.human_decision && !r.outcome) ?? candidates[candidates.length - 1] ?? null;
-          target = hydrated;
-        } catch {
-          // Fall back: if there's a candidate pill, find the recommendation from its evidence
-          const vers = await getPillVersions(OPS_ID);
-          setPillVersions(vers);
-          const candidate = vers.find((v) => v.status === "DRAFT" || v.status === "IN_REVIEW");
-          if (candidate) {
-            // Use the candidate's previous recommendation as the target
-            // For now, try the first recommendation via the audit endpoint
-            // We'll need to find the rec_id from the candidate's content
-            // The change_reason contains the recommendation context
-            // For the demo, we know the first recommendation
-            const fbEvidence = candidate.content.evidence.find((e) => e.kind === "feedback");
-            if (fbEvidence) {
-              const recIdMatch = fbEvidence.citation.match(/rec[_-]?([a-f0-9]{8})/i);
-              if (recIdMatch) {
-                try {
-                  target = await getRecommendation(recIdMatch[1]);
-                } catch { /* ignore */ }
-              }
-            }
-          }
-        }
+      const pointer = preselectedRecId ?? getActiveRec();
+      try {
+        const all = await getRecommendations();
+        const hydrated = await Promise.all(all.map((r) => getRecommendation(r.id).catch(() => r)));
+        hydrated.forEach(cacheRec);
+        setRecs(hydrated);
+        target =
+          hydrated.find((r) => r.id === pointer) ??
+          hydrated[hydrated.length - 1] ??
+          null;
+      } catch {
+        if (pointer) target = await loadRec(pointer);
       }
+      if (target) setActiveRec(target.id);
+      setSelectedRec(target);
+
+      // 3. Feedback for this recommendation — verified against the backend.
+      let fb: string | null = null;
       if (target) {
-        setSelectedRec(target);
-        await refreshState(target);
-      } else if (!preselectedRecId) {
-        // No preselected rec and no accessible recs — show a helpful message
-        setError("No recommendations accessible from this role. Start from the Live Case screen as an Operator.");
+        const ids = getFeedbackIds(target.id);
+        const valid: string[] = [];
+        for (const id of ids) {
+          try { await getFeedback(id); valid.push(id); } catch { /* stale */ }
+        }
+        if (valid.length !== ids.length) setFeedbackIds(target.id, valid);
+        fb = valid[valid.length - 1] ?? null;
+      }
+      setFeedbackId(fb);
+
+      // 4. The candidate produced from the latest feedback (if any).
+      const cand = candidateForFeedback(vers, fb);
+      setCandidate(cand);
+      setDiff(null);
+      if (cand && (cand.status === "DRAFT" || cand.status === "IN_REVIEW")) {
+        try {
+          setDiff(await getPillDiff(OPS_ID, cand.previous_version ?? "1.0.0", cand.version));
+        } catch { /* ignore */ }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preselectedRecId]);
 
-  const refreshState = useCallback(async (rec: RecommendationRecord) => {
-    // Reset state
-    setCandidate(null);
-    setDiff(null);
-
-    let candidatePill: PillVersion | null = null;
-    let diffLoaded = false;
-
-    // Load pill versions
-    try {
-      const vers = await getPillVersions(OPS_ID);
-      setPillVersions(vers);
-      // Find DRAFT (candidate) if exists
-      const draft = vers.find((v) => v.status === "DRAFT" || v.status === "IN_REVIEW" || v.status === "APPROVED" || v.status === "REJECTED") ?? null;
-      if (draft) {
-        setCandidate(draft);
-        candidatePill = draft;
-        // Load diff (only if not already APPROVED/REJECTED)
-        if (draft.status === "DRAFT" || draft.status === "IN_REVIEW") {
-          try {
-            const d = await getPillDiff(OPS_ID, draft.previous_version ?? "1.0.0", draft.version);
-            setDiff(d);
-            diffLoaded = true;
-          } catch { /* ignore */ }
-        }
-      }
-    } catch { /* ignore */ }
-
-    // Check if feedback was submitted (evidence with kind "feedback" in candidate pill)
-    const hasFeedback = candidatePill
-      ? candidatePill.content.evidence.some((e) => e.kind === "feedback")
-      : false;
-
-    // Update step state — derived purely from backend state
-    setStepDone({
-      outcomeDone: !!rec.outcome,
-      feedbackDone: !!rec.outcome && hasFeedback,
-      proposalDone: !!candidatePill,
-      diffDone: diffLoaded,
-      testsDone: !!candidatePill?.validation,
-    });
-  }, []);
-
+  // Reload on mount, and on role change (endpoint access differs by role).
   useEffect(() => {
     loadData();
-  }, [loadData]);
+  }, [loadData, role]);
 
-  // Re-load data on role change (some endpoints require specific roles)
-  useEffect(() => {
-    // Full reload on role change to rebuild from backend state
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role]);
+  // Step completion — derived only from backend state.
+  const feedbackDone = !!feedbackId || !!candidate;
+  const doneStates = {
+    outcome: !!selectedRec?.outcome || feedbackDone,
+    feedback: feedbackDone,
+    proposal: !!candidate,
+    diff: !!candidate && candidate.status !== "DRAFT",
+    tests: !!candidate?.review && !!candidate?.validation,
+  };
 
   // Compute current step
-  const currentStep = computeCurrentStep(selectedRec, stepDone, candidate);
+  const currentStep = computeCurrentStep(selectedRec, feedbackDone, candidate);
   const currentStepIndex = STEPS.findIndex((s) => s.key === currentStep);
   const currentStepRole = STEPS[currentStepIndex]?.role ?? "operator";
 
@@ -228,7 +209,8 @@ export function KnowledgeEvolution({
     );
   }
 
-  const allDone = currentStepIndex >= STEPS.length || (candidate?.status === "APPROVED");
+  const allDone =
+    !!candidate && ["APPROVED", "REJECTED", "DEPRECATED", "SUPERSEDED"].includes(candidate.status);
 
   return (
     <div>
@@ -243,10 +225,10 @@ export function KnowledgeEvolution({
             <select
               className="rec-select"
               value={selectedRec.id}
-              onChange={async (e) => {
-                const r = await getRecommendation(e.target.value);
-                setSelectedRec(r);
-                await refreshState(r);
+              onChange={(e) => {
+                setActiveRec(e.target.value);
+                onSelectRec?.(e.target.value);
+                loadData();
               }}
             >
               {recs.map((r) => (
@@ -264,7 +246,7 @@ export function KnowledgeEvolution({
       </div>
 
       {/* AI proposal banner if candidate exists */}
-      {candidate && candidate.status !== "APPROVED" && (
+      {candidate && (candidate.status === "DRAFT" || candidate.status === "IN_REVIEW") && (
         <div className="ai-proposal-banner">
           <span className="banner-icon">⚠</span>
           <span className="banner-text">AI PROPOSAL — NOT PRODUCTION KNOWLEDGE.</span>
@@ -276,13 +258,7 @@ export function KnowledgeEvolution({
       <ProgressStepper
         steps={STEPS}
         currentIndex={currentStepIndex}
-        doneStates={{
-          outcome: stepDone.outcomeDone,
-          feedback: stepDone.feedbackDone,
-          proposal: stepDone.proposalDone,
-          diff: stepDone.diffDone,
-          tests: stepDone.testsDone,
-        }}
+        doneStates={doneStates}
         allDone={allDone}
       />
 
@@ -300,11 +276,16 @@ export function KnowledgeEvolution({
         <PostApprovalTimeline
           pillVersions={pillVersions}
           candidate={candidate}
+          rec={selectedRec}
           onGoToPill={onGoToPill}
-          onDeprecated={async (updated) => {
-            setCandidate(updated);
-            const vers = await getPillVersions(OPS_ID);
-            setPillVersions(vers);
+          onGoToLiveCase={onGoToLiveCase}
+          onResubmitted={async (fbId) => {
+            addFeedbackId(selectedRec.id, fbId);
+            await loadData();
+            onRefreshPills?.();
+          }}
+          onDeprecated={async () => {
+            await loadData();
             onRefreshPills?.();
           }}
         />
@@ -332,33 +313,30 @@ export function KnowledgeEvolution({
           canAct={canDoCurrentStep}
           onOutcomeRecorded={async () => {
             const updated = await getRecommendation(selectedRec.id);
+            cacheRec(updated);
             setSelectedRec(updated);
-            setStepDone((s) => ({ ...s, outcomeDone: true }));
           }}
         />
       ) : currentStep === "feedback" ? (
         <FeedbackStep
           rec={selectedRec}
           canAct={canDoCurrentStep}
-          onFeedbackSubmitted={async () => {
-            const updated = await getRecommendation(selectedRec.id);
-            setSelectedRec(updated);
-            setStepDone((s) => ({ ...s, feedbackDone: true }));
+          proposedVersion={nextCandidateVersion(pillVersions)}
+          onFeedbackSubmitted={(id) => {
+            if (id) {
+              addFeedbackId(selectedRec.id, id);
+              setFeedbackId(id);
+            }
           }}
         />
       ) : currentStep === "proposal" ? (
         <ProposalStep
           rec={selectedRec}
+          feedbackId={feedbackId}
           canAct={canDoCurrentStep}
-          onProposed={async (c) => {
-            setCandidate(c);
-            const vers = await getPillVersions(OPS_ID);
-            setPillVersions(vers);
-            try {
-              const d = await getPillDiff(OPS_ID, c.previous_version ?? "1.0.0", c.version);
-              setDiff(d);
-            } catch { /* ignore */ }
-            setStepDone((s) => ({ ...s, proposalDone: true }));
+          onProposed={async () => {
+            await loadData();
+            onRefreshPills?.();
           }}
         />
       ) : currentStep === "diff" ? (
@@ -366,8 +344,9 @@ export function KnowledgeEvolution({
           diff={diff}
           candidate={candidate}
           canAct={canDoCurrentStep}
-          onReviewed={() => {
-            setStepDone((s) => ({ ...s, diffDone: true }));
+          onReviewed={async () => {
+            await loadData();
+            onRefreshPills?.();
           }}
           onGoToPill={onGoToPill}
         />
@@ -375,38 +354,24 @@ export function KnowledgeEvolution({
         <TestsStep
           candidate={candidate}
           canAct={canDoCurrentStep}
-          onReviewed={async (updated) => {
-            setCandidate(updated);
-            await refreshState(selectedRec);
+          onReviewed={async () => {
+            await loadData();
           }}
-          onValidated={async (updated) => {
-            setCandidate(updated);
-            await refreshState(selectedRec);
+          onValidated={async () => {
+            await loadData();
           }}
-          onRejected={async (updated) => {
-            setCandidate(updated);
-            await refreshState(selectedRec);
+          onRejected={async () => {
+            await loadData();
+            onRefreshPills?.();
           }}
         />
       ) : currentStep === "approval" ? (
         <ApprovalStep
           candidate={candidate}
           canAct={canDoCurrentStep}
-          onApproved={async (approved) => {
-            setCandidate(approved);
-            const vers = await getPillVersions(OPS_ID);
-            setPillVersions(vers);
-            setStepDone((s) => ({
-              ...s,
-              testsDone: true,
-              diffDone: true,
-              proposalDone: true,
-            }));
+          onApproved={async () => {
+            await loadData();
             onRefreshPills?.();
-          }}
-          onRejected={async (rejected) => {
-            setCandidate(rejected);
-            await refreshState(selectedRec);
           }}
         />
       ) : null}
@@ -449,31 +414,20 @@ function ProgressStepper({
 
 function computeCurrentStep(
   rec: RecommendationRecord | null,
-  done: StepState,
+  feedbackDone: boolean,
   candidate: PillVersion | null
 ): StepKey {
-  if (!rec) return "outcome";
-  if (!rec.human_decision) return "outcome";
-  if (!rec.outcome) return "outcome";
-  if (!candidate) {
-    if (!done.feedbackDone) return "feedback";
-    return "proposal";
+  if (candidate) {
+    if (candidate.status === "DRAFT") return "diff"; // expert reviews the diff and submits
+    if (candidate.status === "IN_REVIEW") {
+      // Reviewer must record review AND validation — both confirmed by the backend.
+      return candidate.review && candidate.validation ? "approval" : "tests";
+    }
+    return "approval"; // APPROVED / REJECTED / DEPRECATED — shown as the end state
   }
-  if (candidate.status === "DRAFT") {
-    if (!done.diffDone) return "diff";
-    return "tests";
-  }
-  if (candidate.status === "IN_REVIEW") {
-    // Reviewer must record review AND validate — both are backend-confirmed
-    const hasReview = !!candidate.review;
-    const hasValidation = !!candidate.validation;
-    if (!hasReview) return "tests";
-    if (!hasValidation) return "tests";
-    return "approval";
-  }
-  if (candidate.status === "APPROVED" || candidate.status === "DEPRECATED") return "approval"; // all done
-  if (candidate.status === "REJECTED") return "tests"; // rejected — back to tests step
-  return "outcome";
+  if (feedbackDone) return "proposal";
+  if (!rec || !rec.human_decision || !rec.outcome) return "outcome";
+  return "feedback";
 }
 
 // --- Outcome Step ---
@@ -571,16 +525,17 @@ function OutcomeStep({
 function FeedbackStep({
   rec,
   canAct,
+  proposedVersion,
   onFeedbackSubmitted,
 }: {
   rec: RecommendationRecord;
   canAct: boolean;
-  onFeedbackSubmitted: () => void;
+  proposedVersion: string;
+  onFeedbackSubmitted: (feedbackId: string | null) => void;
 }) {
   const [correction, setCorrection] = useState(
     "SYNTHETIC CORRECTION: A flat water trend can hide drain backflow. Require a verified drain_backflow observation. If backflow is present, escalate to the duty facilities engineer and block routine monitoring as the sole response, even when water is not rising."
   );
-  const [proposedVersion] = useState("1.1.0");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -588,8 +543,9 @@ function FeedbackStep({
     setSubmitting(true);
     setError(null);
     try {
-      await submitFeedback(rec.id, OPS_ID, correction, proposedVersion);
-      onFeedbackSubmitted();
+      const res = (await submitFeedback(rec.id, OPS_ID, correction, proposedVersion)) as Record<string, unknown>;
+      const id = (res.id as string) ?? (res.feedback_id as string) ?? null;
+      onFeedbackSubmitted(id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -638,10 +594,12 @@ function FeedbackStep({
 
 function ProposalStep({
   rec,
+  feedbackId: knownFeedbackId,
   canAct,
   onProposed,
 }: {
   rec: RecommendationRecord;
+  feedbackId: string | null;
   canAct: boolean;
   onProposed: (candidate: PillVersion) => void;
 }) {
@@ -655,8 +613,11 @@ function ProposalStep({
       // The feedback was already submitted in Step 2 — use it to get the feedback_id
       // by re-submitting with the same text (the backend will return the existing feedback)
       const correction = "SYNTHETIC CORRECTION: A flat water trend can hide drain backflow. Require a verified drain_backflow observation. If backflow is present, escalate to the duty facilities engineer and block routine monitoring as the sole response, even when water is not rising.";
-      const fbResponse = await submitFeedback(rec.id, OPS_ID, correction, "1.1.0") as Record<string, unknown>;
-      const feedbackId = (fbResponse.id as string) ?? (fbResponse.feedback_id as string);
+      let feedbackId = knownFeedbackId;
+      if (!feedbackId) {
+        const fbResponse = (await submitFeedback(rec.id, OPS_ID, correction, "1.1.0")) as Record<string, unknown>;
+        feedbackId = (fbResponse.id as string) ?? (fbResponse.feedback_id as string);
+      }
       if (!feedbackId) throw new Error("Could not determine feedback ID");
       const candidate = await proposeCandidate(feedbackId);
       onProposed(candidate);
@@ -674,7 +635,7 @@ function ProposalStep({
         <span className="card-meta">Role: Expert</span>
       </div>
       <div className="card-body">
-        <div className="callout callout-warning mb-16">
+        <div className="callout callout-ai mb-16">
           <strong>AI Proposal — not production knowledge.</strong> The AI will generate a draft
           revision (v1.1.0) based on the feedback. v1.0.0 remains the active approved version
           until the full governance cycle completes.
@@ -1015,7 +976,9 @@ function TestsStep({
     setSubmitting(true);
     setError(null);
     try {
-      const updated = await transitionPill(OPS_ID, candidate.version, "reject", note.trim() || "Rejected with reason.");
+      const reason = note.trim() || "Rejected with reason.";
+      const updated = await transitionPill(OPS_ID, candidate.version, "reject", reason);
+      rememberRejection(OPS_ID, candidate.version, reason, getRole());
       onRejected(updated);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1149,12 +1112,10 @@ function ApprovalStep({
   candidate,
   canAct,
   onApproved,
-  onRejected,
 }: {
   candidate: PillVersion | null;
   canAct: boolean;
   onApproved: (approved: PillVersion) => void;
-  onRejected: (rejected: PillVersion) => void;
 }) {
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -1167,20 +1128,6 @@ function ApprovalStep({
     try {
       const approved = await transitionPill(OPS_ID, candidate.version, "approve", note.trim() || "Approved via Knowledge Evolution flow.");
       onApproved(approved);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleReject = async () => {
-    if (!candidate) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      const rejected = await transitionPill(OPS_ID, candidate.version, "reject", note.trim() || "Rejected with reason.");
-      onRejected(rejected);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1231,7 +1178,7 @@ function ApprovalStep({
               Only the pill owner (approver) who is not the author can approve.
             </div>
             <div className="mb-16">
-              <div className="section-heading">Note (optional for approve, required for reject)</div>
+              <div className="section-heading">Approval note (optional)</div>
               <textarea
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
@@ -1250,14 +1197,9 @@ function ApprovalStep({
               >
                 {submitting ? "Approving…" : `Approve v${candidate.version}`}
               </button>
-              <button
-                className="btn btn-danger"
-                onClick={handleReject}
-                disabled={submitting || !canAct || !note.trim()}
-                title={note.trim() ? "" : "A reason is required to reject"}
-              >
-                {submitting ? "Rejecting…" : "Reject with reason"}
-              </button>
+              <span className="text-muted text-sm" style={{ alignSelf: "center" }}>
+                Not satisfied? Rejection is made by the independent reviewer at the Tests step.
+              </span>
             </div>
           </div>
         )}
@@ -1271,12 +1213,18 @@ function ApprovalStep({
 function PostApprovalTimeline({
   pillVersions,
   candidate,
+  rec,
   onGoToPill,
+  onGoToLiveCase,
+  onResubmitted,
   onDeprecated,
 }: {
   pillVersions: PillVersion[];
   candidate: PillVersion | null;
+  rec: RecommendationRecord;
   onGoToPill?: (pillId: string) => void;
+  onGoToLiveCase?: () => void;
+  onResubmitted: (feedbackId: string) => Promise<void>;
   onDeprecated?: (updated: PillVersion) => void;
 }) {
   const role = getRole();
@@ -1286,33 +1234,45 @@ function PostApprovalTimeline({
 
   const canDeprecate = role === "approver" && candidate?.status === "APPROVED";
   // Sort versions: oldest first
-  const sorted = [...pillVersions].sort((a, b) => {
-    const av = a.version.split(".").map(Number);
-    const bv = b.version.split(".").map(Number);
-    for (let i = 0; i < Math.max(av.length, bv.length); i++) {
-      const ai = av[i] ?? 0;
-      const bi = bv[i] ?? 0;
-      if (ai !== bi) return ai - bi;
-    }
-    return 0;
-  });
+  const sorted = [...pillVersions].sort((a, b) => semverCmp(a.version, b.version));
 
   return (
     <div className="card">
       <div className="card-header">
         <span className="card-title">Version Timeline</span>
-        <span className="card-meta">Knowledge Evolution Complete</span>
+        <span className="card-meta">Governance cycle complete</span>
       </div>
       <div className="card-body">
-        <div className="callout callout-success mb-16">
-          <strong>v{candidate?.version ?? "1.1.0"} is now APPROVED and active.</strong>
-          The previous version has been superseded but remains readable.
-        </div>
+        {candidate?.status === "APPROVED" && (
+          <div className="callout callout-success mb-16">
+            <strong>v{candidate.version} is now APPROVED and active.</strong>{" "}
+            v{candidate.previous_version} has been superseded but remains readable.
+          </div>
+        )}
+        {candidate?.status === "REJECTED" && (
+          <RejectedPanel
+            candidate={candidate}
+            rec={rec}
+            nextVersion={nextCandidateVersion(pillVersions)}
+            onResubmitted={onResubmitted}
+          />
+        )}
+        {candidate?.status === "APPROVED" && onGoToLiveCase && (
+          <div className="text-dim mb-16">
+            The next operational assessment will use v{candidate.version}.{" "}
+            <span className="pill-link" onClick={onGoToLiveCase}>Run a new assessment →</span>
+          </div>
+        )}
+        {candidate?.status === "DEPRECATED" && (
+          <div className="callout callout-warning mb-16">
+            <strong>v{candidate.version} has been deprecated</strong> and is no longer used for decisions.
+          </div>
+        )}
         <div className="version-timeline">
           {sorted.map((v, i) => (
             <div key={`${v.pill_id}:${v.version}`} className="version-timeline-item">
               <div className="version-timeline-marker">
-                <div className={`version-timeline-dot ${v.status === "SUPERSEDED" ? "superseded" : ""}`} />
+                <div className={`version-timeline-dot ${v.status === "SUPERSEDED" ? "superseded" : ""} ${v.status === "REJECTED" || v.status === "DEPRECATED" ? "rejected" : ""} ${v.status === "IN_REVIEW" || v.status === "DRAFT" ? "pending" : ""}`} />
                 {i < sorted.length - 1 && <div className="version-timeline-line" />}
               </div>
               <div className="version-timeline-content">
@@ -1322,7 +1282,8 @@ function PostApprovalTimeline({
                     v.status === "APPROVED" ? "badge badge-success" :
                     v.status === "SUPERSEDED" ? "badge badge-neutral" :
                     v.status === "DRAFT" ? "badge badge-neutral" :
-                    v.status === "IN_REVIEW" ? "badge badge-info" :
+                    v.status === "IN_REVIEW" ? "badge badge-warning" :
+                    v.status === "REJECTED" || v.status === "DEPRECATED" ? "badge badge-danger" :
                     "badge badge-neutral"
                   }>{v.status}</span>
                 </div>
@@ -1344,11 +1305,15 @@ function PostApprovalTimeline({
 
         {/* Deprecate action for approver */}
         {canDeprecate && (
-          <div className="mt-16">
-            <div className="section-divider mb-16" />
+          <details className="mt-16">
+            <summary className="text-dim" style={{ cursor: "pointer" }}>
+              Advanced: retire this version
+            </summary>
+            <div className="section-divider mb-16 mt-8" />
             <div className="section-heading">Deprecate Version</div>
             <div className="text-dim mb-8">
-              Deprecating v{candidate.version} marks it as no longer suitable for use. This action is irreversible.
+              Deprecating v{candidate.version} retires it from operational use. This is irreversible and is
+              not part of the normal learning flow — use only when a version must be withdrawn.
             </div>
             {error && <div className="error-box mb-16">{error}</div>}
             <textarea
@@ -1378,9 +1343,107 @@ function PostApprovalTimeline({
             >
               {submitting ? "Deprecating…" : `Deprecate v${candidate.version}`}
             </button>
+          </details>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// --- Rejected candidate: reason + governed resubmission ---
+
+function RejectedPanel({
+  candidate,
+  rec,
+  nextVersion,
+  onResubmitted,
+}: {
+  candidate: PillVersion;
+  rec: RecommendationRecord;
+  nextVersion: string;
+  onResubmitted: (feedbackId: string) => Promise<void>;
+}) {
+  const role = getRole();
+  const [reason, setReason] = useState<{ note: string; actor: string; at: string; source: "audit" | "local" } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      // Authoritative source: the audit trail (readable by reviewer/approver).
+      try {
+        const hist = await getAuditHistory(candidate.pill_id, 0, 500);
+        const ev = [...hist.items].reverse().find(
+          (e) => e.event === "PILL_REJECTED" && String(e.detail?.version) === candidate.version
+        );
+        if (ev && !cancelled) {
+          setReason({ note: String(ev.detail?.note ?? ""), actor: ev.actor, at: ev.created_at, source: "audit" });
+          return;
+        }
+      } catch { /* role cannot read audit */ }
+      const local = getRememberedRejection(candidate.pill_id, candidate.version);
+      if (local && !cancelled) setReason({ ...local, source: "local" });
+    })();
+    return () => { cancelled = true; };
+  }, [candidate.pill_id, candidate.version]);
+
+  const canResubmit = role === "expert";
+
+  const handleResubmit = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const fb = (await submitFeedback(rec.id, OPS_ID, candidate.change_reason, nextVersion)) as Record<string, unknown>;
+      const fbId = (fb.id as string) ?? (fb.feedback_id as string);
+      if (!fbId) throw new Error("Could not determine feedback ID");
+      await proposeCandidate(fbId);
+      await onResubmitted(fbId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="rejected-panel mb-16">
+      <div className="rejected-panel-head">
+        <span className="badge badge-danger">Rejected</span>
+        <strong>v{candidate.version} was not released.</strong>
+        <span className="text-dim">v{candidate.previous_version} remains the active approved version — no knowledge changed.</span>
+      </div>
+      <div className="rejected-reason">
+        <div className="rejected-reason-label">Reviewer&apos;s reason</div>
+        {reason ? (
+          <>
+            <div className="rejected-reason-text">&ldquo;{reason.note || "No reason given"}&rdquo;</div>
+            <div className="text-muted text-sm">
+              — {capitaliseActor(reason.actor)} <span className="demo-persona">· demo persona</span>
+              {reason.at ? ` · ${fmtDate(reason.at)}` : ""}
+              {reason.source === "audit" ? " · from audit trail" : ""}
+            </div>
+          </>
+        ) : (
+          <div className="text-muted">
+            Recorded in the audit trail, which is visible to Reviewer and Approver roles.
           </div>
         )}
       </div>
+      <div className="rejected-actions">
+        {canResubmit ? (
+          <button className="btn btn-primary" onClick={handleResubmit} disabled={submitting}>
+            {submitting ? "Creating revised candidate…" : `Revise & resubmit as v${nextVersion}`}
+          </button>
+        ) : (
+          <span className="switch-role-inline">Switch to <b>Expert</b> to revise and resubmit.</span>
+        )}
+        <span className="text-muted text-sm">
+          A rejected version is never edited. Resubmitting creates a new candidate that goes through review,
+          validation and approval again.
+        </span>
+      </div>
+      {error && <div className="error-box mt-8">{error}</div>}
     </div>
   );
 }

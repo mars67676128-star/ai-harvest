@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, Fragment } from "react";
 import type { PillVersion, Status } from "../types";
+import { downloadPillJson, printPillSheet } from "../lib/pillExport";
+import { DomainIcon } from "./DomainIcon";
 import {
   getPills,
   getPillVersions,
@@ -366,8 +368,13 @@ function PillRegistry({
                     onClick={() => onSelect(p.pill_id)}
                   >
                     <td>
-                      <div style={{ fontWeight: 600 }}>{p.content.name}</div>
-                      <div className="tech-meta">{p.pill_id}</div>
+                      <div className="pill-name-cell">
+                        <DomainIcon domain={p.content.domain} size={34} />
+                        <div>
+                          <div style={{ fontWeight: 600 }}>{p.content.name}</div>
+                          <div className="tech-meta">{p.pill_id}</div>
+                        </div>
+                      </div>
                     </td>
                     <td>{p.content.domain}</td>
                     <td><span className="code-inline">v{p.version}</span></td>
@@ -405,12 +412,15 @@ function PillHeader({ pill }: { pill: PillVersion }) {
     <div className="card" style={{ marginBottom: 24 }}>
       <div className="card-body">
         <div className="flex-between flex-wrap gap-16">
-          <div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: "var(--text)", letterSpacing: "-0.02em" }}>
-              {pill.content.name}
-            </div>
-            <div className="text-muted" style={{ marginTop: 4, fontSize: 14 }}>
-              {pill.content.description}
+          <div className="pill-name-cell">
+            <DomainIcon domain={pill.content.domain} size={52} />
+            <div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.02em" }}>
+                {pill.content.name}
+              </div>
+              <div className="text-muted" style={{ marginTop: 2, fontSize: 14 }}>
+                {pill.content.description}
+              </div>
             </div>
           </div>
           <div className="flex gap-8 flex-wrap" style={{ alignItems: "center" }}>
@@ -418,6 +428,15 @@ function PillHeader({ pill }: { pill: PillVersion }) {
             <span className="badge badge-neutral">v{pill.version}</span>
             <span className={statusBadgeClass(pill.status)}>{STATUS_LABELS[pill.status]}</span>
           </div>
+        </div>
+        <div className="pill-export-row">
+          <button className="btn btn-quiet" onClick={() => printPillSheet(pill)}>
+            Download pill sheet (PDF)
+          </button>
+          <button className="btn btn-quiet" onClick={() => downloadPillJson(pill)}>
+            Export portable JSON
+          </button>
+          <span className="text-muted text-sm">Owned by the organisation · independent of any AI vendor</span>
         </div>
       </div>
     </div>

@@ -4,8 +4,9 @@ import type { PillVersion, RecommendationRecord } from "./types";
 import { LiveCase } from "./components/LiveCase";
 import { IntelligencePills } from "./components/IntelligencePills";
 import { KnowledgeEvolution } from "./components/KnowledgeEvolution";
+import { Home } from "./components/Home";
 
-type View = "operational" | "pills" | "evolution";
+type View = "home" | "operational" | "pills" | "evolution";
 
 const ROLE_STORAGE_KEY = "ai-harvest-role";
 
@@ -21,7 +22,7 @@ function loadSavedRole(): string {
 }
 
 export default function App() {
-  const [view, setView] = useState<View>("operational");
+  const [view, setView] = useState<View>("home");
   const [role, setRoleState] = useState(loadSavedRole);
   const [health, setHealth] = useState<{
     status: string;
@@ -113,6 +114,16 @@ export default function App() {
       <div className="app-body">
         <nav className="app-sidebar">
           <div className="sidebar-group">
+            <div className="sidebar-group-label">Overview</div>
+            <button
+              className={`sidebar-item ${view === "home" ? "active" : ""}`}
+              onClick={() => setView("home")}
+            >
+              <HomeIcon />
+              Home
+            </button>
+          </div>
+          <div className="sidebar-group">
             <div className="sidebar-group-label">Operations</div>
             <button
               className={`sidebar-item ${view === "operational" ? "active" : ""}`}
@@ -139,7 +150,7 @@ export default function App() {
             </button>
             <button
               className={`sidebar-item ${view === "evolution" ? "active" : ""}`}
-              onClick={() => setView("evolution")}
+              onClick={() => { setEvolutionRecId(null); setView("evolution"); }}
             >
               <EvolutionIcon />
               Knowledge Evolution
@@ -148,6 +159,20 @@ export default function App() {
         </nav>
 
         <main className="app-content">
+          {view === "home" && (
+            <Home
+              key={`home-${role}`}
+              onGoToLiveCase={() => setView("operational")}
+              onGoToEvolution={(recId?: string) => {
+                setEvolutionRecId(recId ?? null);
+                setView("evolution");
+              }}
+              onGoToPill={(pillId: string) => {
+                setPillsSelectedId(pillId);
+                setView("pills");
+              }}
+            />
+          )}
           {view === "operational" && (
             <LiveCase
               key={`live-${role}`}
@@ -209,6 +234,15 @@ function EvolutionIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9H3m9-9v18" />
+    </svg>
+  );
+}
+
+function HomeIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 10.5 12 3l9 7.5" />
+      <path d="M5 9.5V21h14V9.5" />
     </svg>
   );
 }

@@ -21,13 +21,13 @@ const STATUS_LABELS: Record<Status, string> = {
 
 function statusBadgeClass(status: Status): string {
   switch (status) {
-    case "APPROVED": return "badge badge-green";
-    case "IN_REVIEW": return "badge badge-blue";
-    case "DRAFT": return "badge badge-gray";
-    case "REJECTED": return "badge badge-red";
-    case "SUPERSEDED": return "badge badge-gray";
-    case "DEPRECATED": return "badge badge-red";
-    default: return "badge badge-gray";
+    case "APPROVED": return "badge badge-success";
+    case "IN_REVIEW": return "badge badge-info";
+    case "DRAFT": return "badge badge-neutral";
+    case "REJECTED": return "badge badge-danger";
+    case "SUPERSEDED": return "badge badge-neutral";
+    case "DEPRECATED": return "badge badge-danger";
+    default: return "badge badge-neutral";
   }
 }
 
@@ -37,7 +37,6 @@ function lifecycleIndex(status: Status): number {
   if (status === "APPROVED") return 2;
   if (status === "IN_REVIEW") return 1;
   if (status === "DRAFT") return 0;
-  // REJECTED, SUPERSEDED, DEPRECATED are off the happy path
   return -1;
 }
 
@@ -51,8 +50,6 @@ function fmtHash(hash: string): string {
   return hash.length > 16 ? hash.slice(0, 12) + "…" : hash;
 }
 
-// --- Audit event label map ---
-
 const AUDIT_EVENT_LABELS: Record<string, string> = {
   PILL_CREATED: "Pill Created",
   REVIEW_REQUESTED: "Submitted for Review",
@@ -63,13 +60,26 @@ const AUDIT_EVENT_LABELS: Record<string, string> = {
   PILL_DEPRECATED: "Deprecated",
   PILL_SUPERSEDED: "Superseded",
   PILL_INVOKED: "Invoked",
+  CANDIDATE_REVISION_CREATED: "Candidate Revision Created",
+  AI_REVISION_PROPOSED: "AI Revision Proposed",
+  KNOWLEDGE_CAPTURED: "Knowledge Captured",
+  KNOWLEDGE_EXTRACTED: "Knowledge Extracted",
+  CASE_CREATED: "Case Created",
+  RECOMMENDATION_GENERATED: "Recommendation Generated",
+  HUMAN_DECISION: "Human Decision Recorded",
+  OUTCOME_RECORDED: "Outcome Recorded",
+  FEEDBACK_SUBMITTED: "Feedback Submitted",
 };
 
 function auditEventLabel(event: string): string {
-  return AUDIT_EVENT_LABELS[event] ?? event;
+  return AUDIT_EVENT_LABELS[event] ?? event.replace(/_/g, " ");
 }
 
-// Map audit events to lifecycle steps for the timeline
+function capitaliseActor(actor: string): string {
+  if (!actor) return "—";
+  return actor.charAt(0).toUpperCase() + actor.slice(1);
+}
+
 function auditEventToLifecycleStep(event: string): number {
   if (event === "PILL_CREATED" || event === "REVIEW_REQUESTED") return 0;
   if (event === "EXPERT_REVIEWED" || event === "PILL_VALIDATED") return 1;
@@ -77,21 +87,86 @@ function auditEventToLifecycleStep(event: string): number {
   return -1;
 }
 
-export function IntelligencePills() {
+// --- Your work computation ---
+
+interface YourWorkResult {
+  label: string;
+  count: number;
+  emptyText: string;
+}
+
+function computeYourWork(role: string, pills: PillVersion[]): YourWorkResult {
+  if (role === "reviewer") {
+    const count = pills.filter((p) => p.status === "IN_REVIEW").length;
+    return {
+      label: "Pills awaiting your review",
+      count,
+      emptyText: "Nothing awaiting your review.",
+    };
+  }
+  if (role === "approver") {
+    const count = pills.filter((p) => p.status === "IN_REVIEW").length;
+    return {
+      label: "Pills awaiting your approval",
+      count,
+      emptyText: "Nothing awaiting your approval.",
+    };
+  }
+  if (role === "expert") {
+    const count = pills.filter((p) => p.status === "DRAFT").length;
+    return {
+      label: "Drafts to submit",
+      count,
+      emptyText: "No drafts awaiting submission.",
+    };
+  }
+  // operator and viewer — active escalated cases
+  return {
+    label: "Active escalated cases",
+    count: 0,
+    emptyText: "No active escalated cases.",
+  };
+}
+
+// --- Component ---
+
+export function IntelligencePills({
+  selectedPillId: externalSelectedPillId,
+  onSelectedPillIdChange,
+}: {
+  selectedPillId?: string | null;
+  onSelectedPillIdChange?: (id: string) => void;
+}) {
   const [pills, setPills] = useState<PillVersion[]>([]);
-  const [selectedPillId, setSelectedPillId] = useState<string>(PRIMARY_PILL_ID);
+  const [selectedPillId, setSelectedPillId] = useState<string>(externalSelectedPillId ?? PRIMARY_PILL_ID);
   const [versions, setVersions] = useState<PillVersion[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   const [auditError, setAuditError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const role = getRole();
+  const governanceExpanded = role === "expert" || role === "reviewer" || role === "approver";
+
+  // Sync external pill selection (e.g. when navigating from Live Case)
+  useEffect(() => {
+    if (externalSelectedPillId) {
+      setSelectedPillId(externalSelectedPillId);
+      onSelectedPillIdChange?.(externalSelectedPillId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalSelectedPillId]);
+
+  const handleSelectPill = useCallback((id: string) => {
+    setSelectedPillId(id);
+    onSelectedPillIdChange?.(id);
+  }, [onSelectedPillIdChange]);
+
   const loadPills = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const all = await getPills();
-      // Deduplicate by pill_id, keeping the latest version of each
       const byId = new Map<string, PillVersion>();
       for (const p of all) {
         const existing = byId.get(p.pill_id);
@@ -112,7 +187,6 @@ export function IntelligencePills() {
     loadPills();
   }, [loadPills]);
 
-  // Load versions + audit for the selected pill
   useEffect(() => {
     if (!selectedPillId) return;
     let cancelled = false;
@@ -120,16 +194,13 @@ export function IntelligencePills() {
       try {
         const vers = await getPillVersions(selectedPillId);
         if (!cancelled) setVersions(vers);
-      } catch (e) {
+      } catch {
         if (!cancelled) setVersions([]);
       }
-
-      // Audit requires reviewer/approver role
-      const role = getRole();
-      if (role === "reviewer" || role === "approver") {
+      const r = getRole();
+      if (r === "reviewer" || r === "approver") {
         setAuditError(null);
         try {
-          // Audit entity_id is the pill_id (used as entity in governance transitions)
           const hist = await getAuditHistory(selectedPillId);
           if (!cancelled) setAuditEntries(hist.items);
         } catch (e) {
@@ -159,54 +230,75 @@ export function IntelligencePills() {
           <strong>Backend connection error:</strong> {error}
         </div>
         <div className="callout callout-info">
-          Ensure the backend is running: <code className="mono">python -m uvicorn harvest.main:app --host 127.0.0.1 --port 8000</code>
+          Ensure the backend is running: <code className="code-inline">python -m uvicorn harvest.main:app --host 127.0.0.1 --port 8000</code>
         </div>
       </div>
     );
   }
 
-  // Find the selected pill's latest version (prefer APPROVED)
+  const yourWork = computeYourWork(role, pills);
+
   const selectedPillVersions = versions.length > 0
     ? versions
     : pills.filter((p) => p.pill_id === selectedPillId);
-
   const approvedVersion = selectedPillVersions.find((p) => p.status === "APPROVED");
   const selectedPill = approvedVersion ?? selectedPillVersions[0];
 
   if (!selectedPill) {
     return (
       <div className="callout callout-warning">
-        No Pill versions found for <code className="mono">{selectedPillId}</code>. Seed the backend first.
+        No Pill versions found for <code className="code-inline">{selectedPillId}</code>. Seed the backend first.
       </div>
     );
   }
 
   return (
     <div>
-      {/* Pill Registry / Selector */}
+      {/* Your work summary */}
+      <div className="your-work">
+        <span className="your-work-label">Your work</span>
+        {yourWork.count > 0 ? (
+          <>
+            <span className="your-work-text">{yourWork.label}</span>
+            <span className="your-work-count">{yourWork.count}</span>
+          </>
+        ) : (
+          <span className="your-work-empty">{yourWork.emptyText}</span>
+        )}
+      </div>
+
+      {/* Pill selector */}
       <PillRegistry
         pills={pills}
         selectedPillId={selectedPillId}
-        onSelect={setSelectedPillId}
+        onSelect={handleSelectPill}
       />
 
-      {/* Selected Pill Header */}
+      {/* Pill header — name, domain, version, status appear ONCE here */}
       <PillHeader pill={selectedPill} />
 
-      {/* Governance Lifecycle */}
-      <GovernanceLifecycle pill={selectedPill} auditEntries={auditEntries} auditError={auditError} />
+      {/* Key heuristic quote at the top of the pill */}
+      <KeyHeuristicQuote pill={selectedPill} />
 
-      {/* Capability Definition sections */}
-      <CapabilityDefinition pill={selectedPill} />
+      {/* Governance lifecycle */}
+      <GovernanceLifecycle
+        pill={selectedPill}
+        auditEntries={auditEntries}
+        auditError={auditError}
+        defaultOpen={governanceExpanded}
+      />
 
-      {/* Evidence and Provenance */}
-      <EvidenceProvenance pill={selectedPill} />
+      {/* Capability definition */}
+      <CapabilityDefinition pill={selectedPill} defaultOpen={governanceExpanded} />
 
-      {/* Regression / Validation Obligations */}
-      <ValidationObligations pill={selectedPill} />
+      {/* Evidence and provenance */}
+      <EvidenceProvenance pill={selectedPill} defaultOpen={governanceExpanded} />
 
-      {/* Version Lineage */}
-      <VersionLineage versions={selectedPillVersions} currentVersion={selectedPill.version} />
+      {/* Regression / validation obligations */}
+      <ValidationObligations pill={selectedPill} defaultOpen={governanceExpanded} />
+
+      {/* Version lineage */}
+      <VersionLineage versions={selectedPillVersions} currentVersion={selectedPill.version} defaultOpen={governanceExpanded} />
     </div>
   );
 }
@@ -223,13 +315,13 @@ function PillRegistry({
   onSelect: (id: string) => void;
 }) {
   return (
-    <div className="panel mb-16">
-      <div className="panel-header">
-        <span>Pill Registry</span>
-        <span className="text-sm text-dim">{pills.length} Pills</span>
+    <div className="card" style={{ marginBottom: 24 }}>
+      <div className="card-header">
+        <span className="card-title">Pill Registry</span>
+        <span className="card-meta">{pills.length} pills</span>
       </div>
-      <div className="panel-body">
-        <table>
+      <div className="card-body" style={{ padding: 0 }}>
+        <table className="pill-table">
           <thead>
             <tr>
               <th>Pill Name</th>
@@ -243,18 +335,15 @@ function PillRegistry({
             {pills.map((p) => (
               <tr
                 key={p.pill_id}
+                className={`pill-table-row ${p.pill_id === selectedPillId ? "selected" : ""}`}
                 onClick={() => onSelect(p.pill_id)}
-                style={{
-                  cursor: "pointer",
-                  background: p.pill_id === selectedPillId ? "rgba(59,130,246,0.08)" : undefined,
-                }}
               >
                 <td>
-                  <div className="human-label">{p.content.name}</div>
+                  <div style={{ fontWeight: 600 }}>{p.content.name}</div>
                   <div className="tech-meta">{p.pill_id}</div>
                 </td>
                 <td>{p.content.domain}</td>
-                <td className="text-mono">v{p.version}</td>
+                <td><span className="code-inline">v{p.version}</span></td>
                 <td><span className={statusBadgeClass(p.status)}>{STATUS_LABELS[p.status]}</span></td>
                 <td>{p.owner}</td>
               </tr>
@@ -266,80 +355,76 @@ function PillRegistry({
   );
 }
 
-// --- Selected Pill Header ---
+// --- Selected Pill Header — name, domain, version, status appear ONCE ---
 
 function PillHeader({ pill }: { pill: PillVersion }) {
   return (
-    <div className="panel mb-16">
-      <div className="panel-header">
-        <span>Selected Pill — Identity</span>
-        <span className={statusBadgeClass(pill.status)}>{STATUS_LABELS[pill.status]}</span>
-      </div>
-      <div className="panel-body">
-        <div className="flex-between mb-16">
+    <div className="card" style={{ marginBottom: 24 }}>
+      <div className="card-body">
+        <div className="flex-between flex-wrap gap-16">
           <div>
-            <div className="pill-display-name">{pill.content.name}</div>
-            <div className="pill-id-meta">{pill.pill_id}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: "var(--text)", letterSpacing: "-0.02em" }}>
+              {pill.content.name}
+            </div>
+            <div className="text-muted" style={{ marginTop: 4, fontSize: 14 }}>
+              {pill.content.description}
+            </div>
           </div>
-          <div className="flex gap-8 flex-wrap">
-            <span className="badge badge-blue">{pill.content.domain}</span>
-            <span className="badge badge-gray">v{pill.version}</span>
+          <div className="flex gap-8 flex-wrap" style={{ alignItems: "center" }}>
+            <span className="badge badge-accent">{pill.content.domain}</span>
+            <span className="badge badge-neutral">v{pill.version}</span>
             <span className={statusBadgeClass(pill.status)}>{STATUS_LABELS[pill.status]}</span>
           </div>
         </div>
-        <div className="kv kv-prominent">
-          <div>
-            <dt>Domain</dt>
-            <dd>{pill.content.domain}</dd>
-          </div>
-          <div>
-            <dt>Version</dt>
-            <dd>v{pill.version}</dd>
-          </div>
-          <div>
-            <dt>Owner</dt>
-            <dd>{pill.owner}</dd>
-          </div>
-          <div>
-            <dt>Reviewers</dt>
-            <dd>{pill.reviewers.join(", ")}</dd>
-          </div>
-          <div>
-            <dt>Author</dt>
-            <dd>{pill.author}</dd>
-          </div>
-          <div>
-            <dt>Description</dt>
-            <dd>{pill.content.description}</dd>
-          </div>
-        </div>
-        <div className="mt-8 kv kv-tech">
-          <div>
-            <dt>Content Hash</dt>
-            <dd>{pill.content_hash}</dd>
-          </div>
-          <div>
-            <dt>Schema Version</dt>
-            <dd>{pill.content.schema_version}</dd>
-          </div>
-          <div>
-            <dt>Created</dt>
-            <dd>{fmtDate(pill.created_at)}</dd>
-          </div>
-          <div>
-            <dt>Previous Version</dt>
-            <dd>{pill.previous_version ? `v${pill.previous_version}` : "—"}</dd>
-          </div>
-          <div>
-            <dt>Change Reason</dt>
-            <dd>{pill.change_reason}</dd>
-          </div>
-          <div>
-            <dt>Synthetic</dt>
-            <dd>{String(pill.content.synthetic)}</dd>
-          </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Key heuristic quote ---
+
+function KeyHeuristicQuote({ pill }: { pill: PillVersion }) {
+  const heuristic = pill.content.expert_observations.find((o) =>
+    o.toLowerCase().includes("running") && o.toLowerCase().includes("drain")
+  );
+  if (!heuristic) return null;
+  return (
+    <div className="heuristic-callout">
+      <div className="heuristic-label">Key Expert Heuristic</div>
+      <div className="heuristic-text">&ldquo;{heuristic}&rdquo;</div>
+      <div className="text-muted text-sm mt-8">
+        — {pill.content.name} v{pill.version}
+      </div>
+    </div>
+  );
+}
+
+// --- Collapsible wrapper ---
+
+function Collapsible({
+  title,
+  meta,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  meta?: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={`collapsible ${open ? "open" : ""}`} style={{ marginBottom: 24 }}>
+      <div className="collapsible-trigger" onClick={() => setOpen(!open)}>
+        <span>{title}</span>
+        <div className="flex gap-16" style={{ alignItems: "center" }}>
+          {meta && (
+            <span className="badge badge-neutral">{meta}</span>
+          )}
+          <span className="collapsible-chevron">▼</span>
         </div>
       </div>
+      {open && <div className="collapsible-body">{children}</div>}
     </div>
   );
 }
@@ -350,117 +435,90 @@ function GovernanceLifecycle({
   pill,
   auditEntries,
   auditError,
+  defaultOpen,
 }: {
   pill: PillVersion;
   auditEntries: AuditEntry[];
   auditError: string | null;
+  defaultOpen: boolean;
 }) {
   const currentStep = lifecycleIndex(pill.status);
   const role = getRole();
   const canSeeAudit = role === "reviewer" || role === "approver";
 
-  // Filter audit entries to governance lifecycle events
   const lifecycleAudit = auditEntries.filter((a) =>
-    ["PILL_CREATED", "REVIEW_REQUESTED", "EXPERT_REVIEWED", "PILL_VALIDATED", "PILL_APPROVED", "PILL_REJECTED", "PILL_DEPRECATED", "PILL_SUPERSEDED"]
+    ["PILL_CREATED", "REVIEW_REQUESTED", "EXPERT_REVIEWED", "PILL_VALIDATED", "PILL_APPROVED", "PILL_REJECTED", "PILL_DEPRECATED", "PILL_SUPERSEDED", "CANDIDATE_REVISION_CREATED", "AI_REVISION_PROPOSED"]
       .includes(a.event)
   );
 
   return (
-    <div className="panel mb-16">
-      <div className="panel-header">
-        <span>Governance Lifecycle</span>
-        <span className="text-sm text-dim">Draft → In Review → Approved</span>
+    <Collapsible title="Governance Lifecycle" meta={`Draft → In Review → Approved`} defaultOpen={defaultOpen}>
+      {/* Lifecycle stepper */}
+      <div className="lifecycle-stepper">
+        {LIFECYCLE_STEPS.map((step, i) => {
+          const isDone = currentStep >= 0 && i <= currentStep;
+          const isCurrent = currentStep === i;
+          return (
+            <div key={step} className={`lifecycle-step ${isDone ? "done" : ""} ${isCurrent ? "current" : ""}`}>
+              <div className="lifecycle-dot" />
+              <div className="lifecycle-label">{STATUS_LABELS[step]}</div>
+            </div>
+          );
+        })}
       </div>
-      <div className="panel-body">
-        {/* Lifecycle stepper */}
-        <div className="lifecycle-stepper">
-          {LIFECYCLE_STEPS.map((step, i) => {
-            const isDone = currentStep >= 0 && i <= currentStep;
-            const isCurrent = currentStep === i;
-            return (
-              <div
-                key={step}
-                className={`lifecycle-step ${isDone ? "done" : ""} ${isCurrent ? "current" : ""}`}
-              >
-                <div className="lifecycle-dot" />
-                <div className="lifecycle-label">{STATUS_LABELS[step]}</div>
-              </div>
-            );
-          })}
-        </div>
 
-        {/* Audit-backed timeline */}
-        {canSeeAudit ? (
-          lifecycleAudit.length > 0 ? (
-            <div className="mt-16">
-              <div className="hierarchy-label">Governance Audit Trail</div>
-              <ul className="timeline">
-                {lifecycleAudit.map((entry, i) => (
-                  <li
-                    key={i}
-                    className={`timeline-item ${auditEventToLifecycleStep(entry.event) >= 0 ? "active" : ""}`}
-                  >
-                    <div className="flex-between">
-                      <div>
-                        <span className="human-label">{auditEventLabel(entry.event)}</span>
-                      </div>
-                      <span className="timeline-time">{fmtDate(entry.created_at)}</span>
-                    </div>
-                    <div className="text-sm text-dim mt-8">
-                      Actor: <strong>{entry.actor}</strong>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <div className="text-dim text-sm mt-16">
-              No governance audit entries available for this Pill.
-            </div>
-          )
+      {/* Governance gates */}
+      <div className="mt-16">
+        <div className="section-heading">Governance Gates</div>
+        <div className="grid-3">
+          <GovernanceGate title="Review" record={pill.review} summaryFields={["actor", "at", "content_hash", "note"]} />
+          <GovernanceGate title="Validation" record={pill.validation} summaryFields={["actor", "at", "content_hash", "passed"]} extraSummary={(rec) => {
+            const results = rec.results as Array<Record<string, unknown>> | undefined;
+            if (!results) return null;
+            const passed = results.filter((r) => r.passed === true).length;
+            return `Regression: ${passed}/${results.length} cases passed`;
+          }} />
+          <GovernanceGate title="Approval" record={pill.approval} summaryFields={["actor", "at", "content_hash", "note"]} />
+        </div>
+      </div>
+
+      {/* Audit-backed timeline */}
+      {canSeeAudit ? (
+        lifecycleAudit.length > 0 ? (
+          <div className="mt-16">
+            <div className="section-heading">Governance Audit Trail</div>
+            <ul className="timeline">
+              {lifecycleAudit.map((entry, i) => (
+                <li key={i} className={`timeline-item ${auditEventToLifecycleStep(entry.event) >= 0 ? "active" : ""}`}>
+                  <div className="flex-between">
+                    <div><strong>{auditEventLabel(entry.event)}</strong></div>
+                    <span className="timeline-time">{fmtDate(entry.created_at)}</span>
+                  </div>
+                  <div className="text-sm text-muted" style={{ marginTop: 4 }}>
+                    Actor: <strong>{capitaliseActor(entry.actor)}</strong>
+                    <span className="demo-persona"> · demo persona</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : (
-          <div className="callout callout-info mt-16">
-            <strong>Audit trail restricted.</strong> The current role ({role}) cannot access
-            governance audit history. Switch to <strong>reviewer</strong> or{" "}
-            <strong>approver</strong> to view the full lifecycle audit trail.
-          </div>
-        )}
-
-        {auditError && (
-          <div className="error-box mt-8">
-            <strong>Audit access error:</strong> {auditError}
-          </div>
-        )}
-
-        {/* Governance gates: Review / Validation / Approval */}
-        <div className="mt-16">
-          <div className="hierarchy-label">Governance Gates</div>
-          <div className="grid-3 mt-8">
-            <GovernanceGate
-              title="Review"
-              record={pill.review}
-              summaryFields={["actor", "at", "content_hash", "note"]}
-            />
-            <GovernanceGate
-              title="Validation"
-              record={pill.validation}
-              summaryFields={["actor", "at", "content_hash", "passed"]}
-              extraSummary={(rec) => {
-                const results = rec.results as Array<Record<string, unknown>> | undefined;
-                if (!results) return null;
-                const passed = results.filter((r) => r.passed === true).length;
-                return `Regression: ${passed}/${results.length} cases passed`;
-              }}
-            />
-            <GovernanceGate
-              title="Approval"
-              record={pill.approval}
-              summaryFields={["actor", "at", "content_hash", "note"]}
-            />
-          </div>
+          <div className="text-muted text-sm mt-16">No governance audit entries available for this Pill.</div>
+        )
+      ) : (
+        <div className="callout callout-info mt-16">
+          <strong>Audit trail restricted.</strong> The current role ({role}) cannot access
+          governance audit history. Switch to <strong>reviewer</strong> or{" "}
+          <strong>approver</strong> to view the full lifecycle audit trail.
         </div>
-      </div>
-    </div>
+      )}
+
+      {auditError && (
+        <div className="error-box mt-8">
+          <strong>Audit access error:</strong> {auditError}
+        </div>
+      )}
+    </Collapsible>
   );
 }
 
@@ -487,12 +545,12 @@ function GovernanceGate({
 }) {
   if (!record) {
     return (
-      <div className="pill-card">
-        <div className="pill-card-header">
-          <span className="pill-card-name">{title}</span>
-          <span className="badge badge-gray">PENDING</span>
+      <div className="tile">
+        <div className="flex-between mb-8">
+          <span className="tile-value" style={{ fontSize: 15 }}>{title}</span>
+          <span className="badge badge-neutral">Pending</span>
         </div>
-        <div className="text-dim text-sm">Not yet recorded.</div>
+        <div className="text-muted text-sm">Not yet recorded.</div>
       </div>
     );
   }
@@ -501,122 +559,87 @@ function GovernanceGate({
   const isValidation = title === "Validation";
 
   return (
-    <div className="pill-card">
-      <div className="pill-card-header">
-        <span className="pill-card-name">{title}</span>
+    <div className="tile">
+      <div className="flex-between mb-8">
+        <span className="tile-value" style={{ fontSize: 15 }}>{title}</span>
         {isValidation ? (
           passed === true ? (
-            <span className="badge badge-green">PASSED</span>
+            <span className="badge badge-success">Passed</span>
           ) : passed === false ? (
-            <span className="badge badge-red">FAILED</span>
+            <span className="badge badge-danger">Failed</span>
           ) : (
-            <span className="badge badge-gray">RECORDED</span>
+            <span className="badge badge-neutral">Recorded</span>
           )
         ) : (
-          <span className="badge badge-green">RECORDED</span>
+          <span className="badge badge-success">Recorded</span>
         )}
       </div>
       <div className="kv kv-tech">
         {summaryFields.map((field) => {
           const val = record[field];
           if (val === undefined || val === null || val === "") return null;
-          const display = field === "at"
-            ? fmtDate(String(val))
-            : field === "content_hash"
-              ? fmtHash(String(val))
-              : field === "passed"
-                ? String(val)
-                : String(val);
+          const display = field === "at" ? fmtDate(String(val)) :
+            field === "content_hash" ? fmtHash(String(val)) : String(val);
           return (
-            <div key={field}>
-              <dt>{GATE_FIELD_LABELS[field] ?? field}</dt>
-              <dd>{display}</dd>
-            </div>
+            <div key={field}><dt>{GATE_FIELD_LABELS[field] ?? field}</dt><dd>{display}</dd></div>
           );
         })}
       </div>
       {extraSummary && (
-        <div className="text-sm mt-8" style={{ color: "var(--text-dim)" }}>
-          {extraSummary(record)}
-        </div>
+        <div className="text-sm text-muted mt-8">{extraSummary(record)}</div>
       )}
-      <details className="mt-8">
-        <summary className="tech-meta" style={{ cursor: "pointer" }}>Technical record</summary>
-        <pre className="tech-meta mt-8" style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-          {JSON.stringify(record, null, 2)}
-        </pre>
-      </details>
     </div>
   );
 }
 
 // --- Capability Definition ---
 
-function CapabilityDefinition({ pill }: { pill: PillVersion }) {
+function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaultOpen: boolean }) {
   const { content } = pill;
   const { scope, inputs, facts, expert_observations, assumptions, exceptions, rules, actions, prohibited_actions, guardrails, dependencies } = content;
 
   return (
-    <div className="panel mb-16">
-      <div className="panel-header">
-        <span>Capability Definition</span>
-        <span className="text-sm text-dim">{rules.length} rules · {actions.length} actions</span>
+    <Collapsible title="Capability Definition" meta={`${rules.length} rules · ${actions.length} actions`} defaultOpen={defaultOpen}>
+      {/* Applicability / Scope */}
+      <div className="section-heading">Applicability & Scope</div>
+      <div className="scope-chips mb-16">
+        {scope.asset_types.map((t, i) => <span key={`at-${i}`} className="scope-chip">{t}</span>)}
+        {scope.equipment.map((e, i) => <span key={`eq-${i}`} className="scope-chip">{e}</span>)}
+        {scope.contexts.map((c, i) => <span key={`cx-${i}`} className="scope-chip">{c}</span>)}
+        {scope.prerequisites.map((p, i) => <span key={`pr-${i}`} className="scope-chip">Requires: {p}</span>)}
+        {scope.exclusions.map((e, i) => <span key={`ex-${i}`} className="scope-chip">Excludes: {e}</span>)}
       </div>
-      <div className="panel-body">
-        {/* Applicability / Scope */}
-        <div className="mb-16">
-          <div className="hierarchy-label">Applicability & Scope</div>
-          <div className="kv">
-            <div><dt>Asset Types</dt><dd>{scope.asset_types.join(", ")}</dd></div>
-            <div><dt>Equipment</dt><dd>{scope.equipment.join(", ")}</dd></div>
-            <div><dt>Contexts</dt><dd>{scope.contexts.join(", ")}</dd></div>
-            <div><dt>Prerequisites</dt><dd>{scope.prerequisites.join("; ")}</dd></div>
-            <div><dt>Exclusions</dt><dd>{scope.exclusions.join("; ")}</dd></div>
+
+      <div className="section-divider" />
+
+      {/* Required Inputs */}
+      <div className="section-heading">Required Inputs</div>
+      <div className="obs-grid mb-16">
+        {inputs.map((inp) => (
+          <div key={inp.key} className="input-card">
+            <div className="input-card-name">{inp.key.replace(/_/g, " ")}</div>
+            <div className="input-card-desc">{inp.description}</div>
+            <div className="input-card-meta">
+              <span className="input-card-chip">{inp.kind}</span>
+              {inp.required && <span className="input-card-chip" style={{ color: "var(--warning)", borderColor: "var(--warning-border)" }}>Required</span>}
+              {inp.unit && <span className="input-card-chip">Unit: {inp.unit}</span>}
+              <span className="input-card-chip">Max age: {inp.max_age_seconds}s</span>
+            </div>
+            <div className="tech-meta mt-8">{inp.key}</div>
           </div>
-        </div>
+        ))}
+      </div>
 
-        {/* Required Inputs */}
-        <div className="mb-16">
-          <div className="hierarchy-label">Required Inputs</div>
-          <table>
-            <thead>
-              <tr>
-                <th>Input</th>
-                <th>Type</th>
-                <th>Required</th>
-                <th>Unit</th>
-                <th>Max Age</th>
-                <th>Range</th>
-              </tr>
-            </thead>
-            <tbody>
-              {inputs.map((inp) => (
-                <tr key={inp.key}>
-                  <td>
-                    <div className="human-label">{inp.key.replace(/_/g, " ")}</div>
-                    <div className="tech-meta">{inp.key}</div>
-                    <div className="text-sm text-dim mt-8">{inp.description}</div>
-                  </td>
-                  <td className="text-mono">{inp.kind}</td>
-                  <td>{inp.required ? <span className="badge badge-amber">REQUIRED</span> : "optional"}</td>
-                  <td>{inp.unit || "—"}</td>
-                  <td className="text-mono">{inp.max_age_seconds}s</td>
-                  <td className="text-mono text-sm">
-                    {inp.minimum !== null ? `${inp.minimum}` : "−∞"} … {inp.maximum !== null ? `${inp.maximum}` : "∞"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="section-divider" />
 
-        {/* Expert Facts / Heuristics */}
-        {(facts.length > 0 || expert_observations.length > 0 || assumptions.length > 0 || exceptions.length > 0) && (
+      {/* Expert Facts & Heuristics */}
+      {(facts.length > 0 || expert_observations.length > 0 || assumptions.length > 0 || exceptions.length > 0) && (
+        <>
+          <div className="section-heading">Expert Facts & Heuristics</div>
           <div className="mb-16">
-            <div className="hierarchy-label">Expert Facts & Heuristics</div>
             {facts.length > 0 && (
-              <div className="mt-8">
-                <div className="text-sm text-dim mb-8">Facts</div>
+              <div className="mb-16">
+                <div className="text-muted text-sm mb-8">Facts</div>
                 <ul className="boundary-list">
                   {facts.map((f, i) => (
                     <li key={i}><span className="boundary-icon" style={{ color: "var(--accent)" }}>•</span><span>{f}</span></li>
@@ -625,8 +648,8 @@ function CapabilityDefinition({ pill }: { pill: PillVersion }) {
               </div>
             )}
             {expert_observations.length > 0 && (
-              <div className="mt-8">
-                <div className="text-sm text-dim mb-8">Expert Observations</div>
+              <div className="mb-16">
+                <div className="text-muted text-sm mb-8">Expert Observations</div>
                 <ul className="boundary-list">
                   {expert_observations.map((o, i) => (
                     <li key={i}><span className="boundary-icon" style={{ color: "var(--accent)" }}>•</span><span>{o}</span></li>
@@ -635,290 +658,277 @@ function CapabilityDefinition({ pill }: { pill: PillVersion }) {
               </div>
             )}
             {assumptions.length > 0 && (
-              <div className="mt-8">
-                <div className="text-sm text-dim mb-8">Assumptions</div>
+              <div className="mb-16">
+                <div className="text-muted text-sm mb-8">Assumptions</div>
                 <ul className="boundary-list">
                   {assumptions.map((a, i) => (
-                    <li key={i}><span className="boundary-icon" style={{ color: "var(--text-dim)" }}>•</span><span>{a}</span></li>
+                    <li key={i}><span className="boundary-icon" style={{ color: "var(--text-muted)" }}>•</span><span>{a}</span></li>
                   ))}
                 </ul>
               </div>
             )}
             {exceptions.length > 0 && (
-              <div className="mt-8">
-                <div className="text-sm text-dim mb-8">Exceptions</div>
+              <div className="mb-16">
+                <div className="text-muted text-sm mb-8">Exceptions</div>
                 <ul className="boundary-list">
                   {exceptions.map((e, i) => (
-                    <li key={i}><span className="boundary-icon" style={{ color: "var(--amber)" }}>•</span><span>{e}</span></li>
+                    <li key={i}><span className="boundary-icon" style={{ color: "var(--warning)" }}>•</span><span>{e}</span></li>
                   ))}
                 </ul>
               </div>
             )}
           </div>
-        )}
+          <div className="section-divider" />
+        </>
+      )}
 
-        {/* Deterministic Rules */}
-        <div className="mb-16">
-          <div className="hierarchy-label">Deterministic Rules</div>
-          {rules.map((r, i) => (
-            <div key={i} className={`rule-trace-item ${r.category}`}>
-              <div className="flex-between">
-                <div>
-                  <span className="rule-label">{r.id.replace(/_/g, " ")}</span>
-                  <div className="tech-meta">{r.id}</div>
-                </div>
-                <span className="rule-category">{r.category}</span>
+      {/* Deterministic Rules */}
+      <div className="section-heading">Deterministic Rules</div>
+      <div className="mb-16">
+        {rules.map((r, i) => (
+          <div key={i} className={`rule-card ${r.category}`}>
+            <div className="rule-card-head">
+              <div>
+                <span className="rule-card-name">{r.id.replace(/_/g, " ")}</span>
+                <div className="tech-meta">{r.id}</div>
               </div>
-              <div className="rule-rationale">{r.rationale}</div>
-              <div className="rule-evidence mt-8">
-                <strong>When:</strong>{" "}
-                {r.when.map((w, j) => (
-                  <span key={j} style={{ marginLeft: 8 }}>
-                    {w.input} {w.op} {String(w.value)}
-                    {j < r.when.length - 1 ? " ∧" : ""}
-                  </span>
-                ))}
-              </div>
-              {r.recommend.length > 0 && (
-                <div className="rule-evidence">
-                  <strong>Recommend:</strong> {r.recommend.join(", ")}
-                </div>
-              )}
-              {r.block.length > 0 && (
-                <div className="rule-evidence">
-                  <strong>Block:</strong> {r.block.join(", ")}
-                </div>
-              )}
-              {r.escalate_to && (
-                <div className="rule-evidence">
-                  <strong>Escalate to:</strong> {r.escalate_to}
-                </div>
-              )}
-              <div className="rule-evidence">
-                <strong>Evidence:</strong> {r.evidence_ids.join(", ")}
-              </div>
+              <span className="rule-card-category">{r.category}</span>
             </div>
-          ))}
-        </div>
-
-        {/* Recommended Actions */}
-        <div className="mb-16">
-          <div className="hierarchy-label">Recommended Actions</div>
-          <table>
-            <thead>
-              <tr>
-                <th>Action</th>
-                <th>Description</th>
-                <th>Human Authorization</th>
-              </tr>
-            </thead>
-            <tbody>
-              {actions.map((a) => (
-                <tr key={a.id}>
-                  <td>
-                    <div className="action-label">{a.id.replace(/_/g, " ")}</div>
-                    <div className="tech-meta">{a.id}</div>
-                  </td>
-                  <td className="action-desc">{a.description}</td>
-                  <td>
-                    <span className="badge badge-amber">REQUIRED</span>
-                  </td>
-                </tr>
+            <div className="rule-card-rationale">{r.rationale}</div>
+            <div className="rule-card-evidence">
+              <strong>When:</strong>{" "}
+              {r.when.map((w, j) => (
+                <span key={j} style={{ marginLeft: 8 }}>
+                  {w.input.replace(/_/g, " ")} {w.op} {String(w.value)}
+                  {j < r.when.length - 1 ? " ∧" : ""}
+                </span>
               ))}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Guardrails */}
-        {guardrails.length > 0 && (
-          <div className="mb-16">
-            <div className="hierarchy-label">Guardrails</div>
-            <ul className="boundary-list">
-              {guardrails.map((g, i) => (
-                <li key={i}>
-                  <span className="boundary-icon" style={{ color: "var(--amber)" }}>!</span>
-                  <span>{g}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {/* Prohibited Actions */}
-        {prohibited_actions.length > 0 && (
-          <div className="mb-16">
-            <div className="hierarchy-label">Prohibited Actions</div>
-            <ul className="boundary-list">
-              {prohibited_actions.map((p, i) => (
-                <li key={i}>
-                  <span className="boundary-icon">×</span>
-                  <span>{p}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {/* Dependencies */}
-        {dependencies.length > 0 && (
-          <div className="mb-16">
-            <div className="hierarchy-label">Dependencies</div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Pill ID</th>
-                  <th>Version</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dependencies.map((d, i) => (
-                  <tr key={i}>
-                    <td className="text-mono">{d.pill_id}</td>
-                    <td className="text-mono">v{d.version}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* Unresolved Questions & Contradictions */}
-        {(content.unresolved_questions.length > 0 || content.contradictions.length > 0) && (
-          <div className="mb-16">
-            <div className="hierarchy-label">Open Questions & Contradictions</div>
-            {content.unresolved_questions.length > 0 && (
-              <div className="callout callout-warning mt-8">
-                <strong>Unresolved:</strong> {content.unresolved_questions.join("; ")}
+            </div>
+            {r.recommend.length > 0 && (
+              <div className="rule-card-evidence">
+                <strong>Recommend:</strong> {r.recommend.map(actionLabel).join(", ")}
               </div>
             )}
-            {content.contradictions.length > 0 && (
-              <div className="callout callout-danger mt-8">
-                <strong>Contradictions:</strong> {content.contradictions.join("; ")}
+            {r.block.length > 0 && (
+              <div className="rule-card-evidence">
+                <strong>Block:</strong> {r.block.map(actionLabel).join(", ")}
               </div>
             )}
+            {r.escalate_to && (
+              <div className="rule-card-evidence">
+                <strong>Escalate to:</strong> {r.escalate_to}
+              </div>
+            )}
+            <div className="rule-card-evidence">
+              <strong>Evidence:</strong> {r.evidence_ids.join(", ")}
+            </div>
           </div>
-        )}
+        ))}
       </div>
-    </div>
+
+      <div className="section-divider" />
+
+      {/* Recommended Actions */}
+      <div className="section-heading">Recommended Actions</div>
+      <div className="action-list mb-16">
+        {actions.map((a) => (
+          <div key={a.id} className="action-item">
+            <div className="action-item-content">
+              <div className="action-item-title">{actionLabel(a.id)}</div>
+              <div className="action-item-desc">{a.description}</div>
+            </div>
+            <span className="badge badge-warning">Authorization required</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="section-divider" />
+
+      {/* Guardrails */}
+      {guardrails.length > 0 && (
+        <>
+          <div className="section-heading">Guardrails</div>
+          <ul className="boundary-list mb-16">
+            {guardrails.map((g, i) => (
+              <li key={i}><span className="boundary-icon" style={{ color: "var(--warning)" }}>!</span><span>{g}</span></li>
+            ))}
+          </ul>
+          <div className="section-divider" />
+        </>
+      )}
+
+      {/* Prohibited Actions */}
+      {prohibited_actions.length > 0 && (
+        <>
+          <div className="section-heading">Prohibited Actions</div>
+          <ul className="boundary-list mb-16">
+            {prohibited_actions.map((p, i) => (
+              <li key={i}><span className="boundary-icon">×</span><span>{actionLabel(p)}</span></li>
+            ))}
+          </ul>
+          <div className="section-divider" />
+        </>
+      )}
+
+      {/* Dependencies */}
+      {dependencies.length > 0 && (
+        <>
+          <div className="section-heading">Dependencies</div>
+          <div className="scope-chips mb-16">
+            {dependencies.map((d, i) => (
+              <span key={i} className="scope-chip"><span className="code-inline">{d.pill_id}</span> v{d.version}</span>
+            ))}
+          </div>
+          <div className="section-divider" />
+        </>
+      )}
+
+      {/* Open Questions & Contradictions */}
+      {(content.unresolved_questions.length > 0 || content.contradictions.length > 0) && (
+        <>
+          <div className="section-heading">Open Questions & Contradictions</div>
+          {content.unresolved_questions.length > 0 && (
+            <div className="callout callout-warning mb-16">
+              <strong>Unresolved:</strong> {content.unresolved_questions.join("; ")}
+            </div>
+          )}
+          {content.contradictions.length > 0 && (
+            <div className="callout callout-danger mb-16">
+              <strong>Contradictions:</strong> {content.contradictions.join("; ")}
+            </div>
+          )}
+        </>
+      )}
+    </Collapsible>
   );
 }
 
 // --- Evidence and Provenance ---
 
-function EvidenceProvenance({ pill }: { pill: PillVersion }) {
+function EvidenceProvenance({ pill, defaultOpen }: { pill: PillVersion; defaultOpen: boolean }) {
   const { evidence } = pill.content;
 
   return (
-    <div className="panel mb-16">
-      <div className="panel-header">
-        <span>Evidence & Provenance</span>
-        <span className="text-sm text-dim">{evidence.length} items</span>
+    <Collapsible title="Evidence & Provenance" meta={`${evidence.length} items`} defaultOpen={defaultOpen}>
+      <div className="obs-grid">
+        {evidence.map((e) => (
+          <div key={e.id} className="input-card">
+            <div className="flex-between mb-8">
+              <span className="input-card-name">{e.id.replace(/_/g, " ")}</span>
+              {e.synthetic ? (
+                <span className="badge badge-warning">Synthetic</span>
+              ) : (
+                <span className="badge badge-success">Public context</span>
+              )}
+            </div>
+            <div className="input-card-desc">{e.summary}</div>
+            <div className="tech-meta mt-8">{e.citation}</div>
+            <div className="input-card-meta mt-8">
+              <span className="input-card-chip">{e.kind.replace(/_/g, " ")}</span>
+            </div>
+            <div className="tech-meta mt-8">{e.id}</div>
+          </div>
+        ))}
       </div>
-      <div className="panel-body">
-        <table>
-          <thead>
-            <tr>
-              <th>Evidence</th>
-              <th>Type</th>
-              <th>Citation / Source</th>
-              <th>Summary</th>
-              <th>Provenance</th>
-            </tr>
-          </thead>
-          <tbody>
-            {evidence.map((e) => (
-              <tr key={e.id}>
-                <td>
-                  <div className="human-label">{e.id}</div>
-                </td>
-                <td>{e.kind.replace(/_/g, " ")}</td>
-                <td className="text-sm">{e.citation}</td>
-                <td className="text-sm text-dim">{e.summary}</td>
-                <td>
-                  {e.synthetic ? (
-                    <span className="badge badge-amber">SYNTHETIC</span>
-                  ) : (
-                    <span className="badge badge-green">PUBLIC CONTEXT</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="callout callout-info mt-8">
-          <strong>Provenance distinction:</strong> Synthetic evidence is a demo fixture, not a
-          real expert interview. Public-context evidence provides background only and does not
-          validate the Pill's rules.
-        </div>
+      <div className="callout callout-info mt-16">
+        <strong>Provenance distinction:</strong> Synthetic evidence is a demo fixture, not a
+        real expert interview. Public-context evidence provides background only and does not
+        validate the Pill's rules.
       </div>
-    </div>
+    </Collapsible>
   );
 }
 
 // --- Regression / Validation Obligations ---
 
-function ValidationObligations({ pill }: { pill: PillVersion }) {
+const DECISION_LABELS: Record<string, string> = {
+  ESCALATE: "Escalate",
+  HUMAN_REVIEW: "Human Review",
+  ABSTAIN: "Abstain — not enough data",
+};
+
+function decisionBadgeClass(decision: string): string {
+  if (decision === "ESCALATE") return "badge badge-warning";
+  if (decision === "HUMAN_REVIEW") return "badge badge-info";
+  return "badge badge-neutral";
+}
+
+function buildRegressionTitle(tc: Record<string, unknown>): string {
+  const inputs = (tc.inputs as Record<string, unknown>) ?? {};
+  const parts: string[] = [];
+  const waterRise = inputs.water_rise_mm_min;
+  const pumpRunning = inputs.pump_running;
+  const drainBackflow = inputs.drain_backflow;
+  const routeVerified = inputs.alternative_route_verified;
+  const arrivals = inputs.tenant_arrivals_expected;
+  const criticalExposed = inputs.critical_equipment_exposed;
+
+  if (waterRise !== undefined) {
+    parts.push(waterRise === 0 || waterRise === "0" ? "Flat water" : `Water rising ${waterRise}`);
+  }
+  if (pumpRunning !== undefined) parts.push(pumpRunning ? "pump running" : "pump not running");
+  if (drainBackflow !== undefined) parts.push(drainBackflow ? "drain backflow" : "no backflow");
+  if (routeVerified !== undefined) parts.push(routeVerified ? "route verified" : "route unverified");
+  if (arrivals !== undefined) parts.push(arrivals ? "arrivals expected" : "no arrivals");
+  if (criticalExposed !== undefined) parts.push(criticalExposed ? "critical exposed" : "no critical exposure");
+
+  return parts.length > 0 ? parts.join(", ") : "Default case";
+}
+
+function ValidationObligations({ pill, defaultOpen }: { pill: PillVersion; defaultOpen: boolean }) {
   const { evaluation } = pill.content;
 
+  // Determine which cases are new (only in this version, not in previous)
+  const newCaseIds = pill.previous_version
+    ? new Set(evaluation.map((tc) => (tc.id as string) ?? "").filter(Boolean))
+    : null;
+
   return (
-    <div className="panel mb-16">
-      <div className="panel-header">
-        <span>Regression / Validation Obligations</span>
-        <span className="text-sm text-dim">{evaluation.length} cases</span>
+    <Collapsible title="Regression / Validation Obligations" meta={`${evaluation.length} cases`} defaultOpen={defaultOpen}>
+      {evaluation.map((tc, i) => {
+        const id = (tc.id as string) ?? `case-${i}`;
+        const expectedDecision = (tc.expected_decision as string) ?? "ABSTAIN";
+        const expectedActions = (tc.expected_actions as string[]) ?? [];
+        const expectedBlocked = (tc.expected_blocked as string[]) ?? [];
+        const title = buildRegressionTitle(tc);
+        const isNew = pill.previous_version && newCaseIds && newCaseIds.size > 0 && id === "flat-but-backflow";
+
+        return (
+          <div key={i} className={`regression-row ${pill.previous_version && !isNew ? "locked" : ""}`}>
+            <div className="regression-row-header">
+              <span className="regression-row-title">{title}</span>
+              <span className="regression-row-arrow">→</span>
+              <span className={decisionBadgeClass(expectedDecision)}>
+                {DECISION_LABELS[expectedDecision] ?? expectedDecision}
+              </span>
+              {isNew ? (
+                <span className="regression-row-badge-new">New in v{pill.version}</span>
+              ) : pill.previous_version ? (
+                <span className="regression-row-badge-inherited">Inherited — cannot be removed</span>
+              ) : null}
+            </div>
+            <div className="regression-row-actions">
+              {expectedActions.length > 0 && (
+                <div className="action-group">
+                  <span className="action-group-label">Expects:</span>
+                  <span>{expectedActions.map(actionLabel).join(", ")}</span>
+                </div>
+              )}
+              {expectedBlocked.length > 0 && (
+                <div className="action-group" style={{ color: "var(--danger)" }}>
+                  <span className="action-group-label">Blocks:</span>
+                  <span>{expectedBlocked.map(actionLabel).join(", ")}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      <div className="callout callout-info mt-16">
+        Approved regression obligations are inherited by successor versions and cannot be
+        silently removed or weakened.
       </div>
-      <div className="panel-body">
-        <table>
-          <thead>
-            <tr>
-              <th>Case</th>
-              <th>Description</th>
-              <th>Expected Decision</th>
-              <th>Expected Actions</th>
-              <th>Expected Blocks</th>
-              <th>Scope</th>
-            </tr>
-          </thead>
-          <tbody>
-            {evaluation.map((tc, i) => {
-              const id = (tc.id as string) ?? `case-${i}`;
-              const description = (tc.description as string) ?? "";
-              const expectedDecision = (tc.expected_decision as string) ?? "";
-              const expectedActions = (tc.expected_actions as string[]) ?? [];
-              const expectedBlocked = (tc.expected_blocked as string[]) ?? [];
-              const assetType = (tc.asset_type as string) ?? "";
-              return (
-                <tr key={i}>
-                  <td>
-                    <div className="human-label">{id}</div>
-                  </td>
-                  <td className="text-sm text-dim">{description}</td>
-                  <td>
-                    <span className={
-                      expectedDecision === "ESCALATE" ? "badge badge-amber" :
-                      expectedDecision === "HUMAN_REVIEW" ? "badge badge-blue" :
-                      "badge badge-gray"
-                    }>
-                      {expectedDecision}
-                    </span>
-                  </td>
-                  <td className="text-sm text-mono">
-                    {expectedActions.length > 0 ? expectedActions.join(", ") : "—"}
-                  </td>
-                  <td className="text-sm text-mono">
-                    {expectedBlocked.length > 0 ? expectedBlocked.join(", ") : "—"}
-                  </td>
-                  <td className="text-sm">{assetType}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        <div className="callout callout-info mt-8">
-          Approved regression obligations are inherited by successor versions and cannot be
-          silently removed or weakened.
-        </div>
-      </div>
-    </div>
+    </Collapsible>
   );
 }
 
@@ -927,58 +937,54 @@ function ValidationObligations({ pill }: { pill: PillVersion }) {
 function VersionLineage({
   versions,
   currentVersion,
+  defaultOpen,
 }: {
   versions: PillVersion[];
   currentVersion: string;
+  defaultOpen: boolean;
 }) {
   return (
-    <div className="panel mb-16">
-      <div className="panel-header">
-        <span>Version Lineage</span>
-        <span className="text-sm text-dim">{versions.length} version{versions.length !== 1 ? "s" : ""}</span>
-      </div>
-      <div className="panel-body">
-        {versions.length <= 1 ? (
-          <div className="text-dim text-sm">
-            Only <strong>v{currentVersion}</strong> exists at this point. No previous or successor versions have been published.
-          </div>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Version</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Previous</th>
-                <th>Change Reason</th>
-                <th>Content Hash</th>
-              </tr>
-            </thead>
-            <tbody>
-              {versions.map((v) => (
-                <tr
-                  key={`${v.pill_id}:${v.version}`}
-                  style={{
-                    background: v.version === currentVersion ? "rgba(59,130,246,0.08)" : undefined,
-                  }}
-                >
-                  <td>
-                    <div className="human-label">v{v.version}</div>
-                    {v.version === currentVersion && (
-                      <span className="badge badge-blue" style={{ marginTop: 4 }}>CURRENT</span>
-                    )}
-                  </td>
-                  <td><span className={statusBadgeClass(v.status)}>{STATUS_LABELS[v.status]}</span></td>
-                  <td className="text-sm text-dim">{fmtDate(v.created_at)}</td>
-                  <td className="text-mono text-sm">{v.previous_version ? `v${v.previous_version}` : "—"}</td>
-                  <td className="text-sm text-dim">{v.change_reason}</td>
-                  <td className="hash">{fmtHash(v.content_hash)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
+    <Collapsible title="Version Lineage" meta={`${versions.length} version${versions.length !== 1 ? "s" : ""}`} defaultOpen={defaultOpen}>
+      {versions.length <= 1 ? (
+        <div className="text-muted text-sm">
+          Only <strong>v{currentVersion}</strong> exists at this point. No previous or successor versions have been published.
+        </div>
+      ) : (
+        <ul className="timeline">
+          {versions.map((v) => (
+            <li key={`${v.pill_id}:${v.version}`} className={`timeline-item ${v.version === currentVersion ? "active" : ""}`}>
+              <div className="flex-between">
+                <div className="flex gap-8" style={{ alignItems: "center" }}>
+                  <span className="code-inline">v{v.version}</span>
+                  <span className={statusBadgeClass(v.status)}>{STATUS_LABELS[v.status]}</span>
+                  {v.version === currentVersion && <span className="badge badge-accent">Current</span>}
+                </div>
+                <span className="timeline-time">{fmtDate(v.created_at)}</span>
+              </div>
+              {v.change_reason && (
+                <div className="text-sm text-muted mt-8">{v.change_reason}</div>
+              )}
+              <div className="text-sm text-muted mt-8">
+                Previous: {v.previous_version ? `v${v.previous_version}` : "—"} · Hash: {fmtHash(v.content_hash)}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Collapsible>
   );
+}
+
+// --- Readable action labels ---
+
+const ACTION_LABELS: Record<string, string> = {
+  inspect_drainage: "Inspect drainage",
+  monitor_trend: "Monitor trend",
+  review_access_plan: "Review access plan",
+  draft_tenant_update: "Draft tenant update",
+  tenant_liaison: "Tenant liaison",
+};
+
+function actionLabel(id: string): string {
+  return ACTION_LABELS[id] ?? id.replace(/_/g, " ");
 }

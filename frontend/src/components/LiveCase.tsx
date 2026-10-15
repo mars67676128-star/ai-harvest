@@ -74,6 +74,13 @@ function evidenceLabel(id: string): string {
   return EVIDENCE_LABELS[id] ?? id;
 }
 
+function capitaliseActor(actor: string): string {
+  if (!actor) return "—";
+  // Strip "demo-" prefix and capitalise: "demo-operator" → "Operator"
+  const name = actor.replace(/^demo[-_]/, "");
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 function extractEscalationRoles(escalations: string[]): string[] {
   const roles: string[] = [];
   for (const esc of escalations) {
@@ -664,7 +671,7 @@ function RecommendationDetail({
           <div><dt>Valid Until</dt><dd>{rec.valid_until?.slice(0, 19).replace("T", " ") ?? "—"} UTC</dd></div>
           <div><dt>Recommendation ID</dt><dd>{rec.id}</dd></div>
           <div><dt>Case ID</dt><dd>{rec.case_id}</dd></div>
-          <div><dt>Actor</dt><dd>{rec.actor}</dd></div>
+          <div><dt>Actor</dt><dd>{capitaliseActor(rec.actor)}</dd></div>
         </div>
       </Collapsible>
     </div>
@@ -732,7 +739,7 @@ function HumanDecisionArea({
           </div>
           <div className="kv">
             <div><dt>Decision</dt><dd>Escalated</dd></div>
-            <div><dt>Accountable Actor</dt><dd>{rec.human_decision.actor}</dd></div>
+            <div><dt>Accountable Actor</dt><dd>{capitaliseActor(rec.human_decision.actor)}</dd></div>
             <div><dt>Note</dt><dd>{rec.human_decision.note}</dd></div>
           </div>
           <div className="mt-8 kv kv-tech">

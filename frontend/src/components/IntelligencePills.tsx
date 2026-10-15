@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import type { PillVersion, Status } from "../types";
 import {
   getPills,
@@ -77,7 +77,9 @@ function auditEventLabel(event: string): string {
 
 function capitaliseActor(actor: string): string {
   if (!actor) return "—";
-  return actor.charAt(0).toUpperCase() + actor.slice(1);
+  // Strip "demo-" prefix and capitalise: "demo-operator" → "Operator"
+  const name = actor.replace(/^demo[-_]/, "");
+  return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 function auditEventToLifecycleStep(event: string): number {
@@ -138,6 +140,7 @@ export function IntelligencePills({
   onSelectedPillIdChange?: (id: string) => void;
 }) {
   const [pills, setPills] = useState<PillVersion[]>([]);
+  const [draftVersions, setDraftVersions] = useState<Array<{ pillId: string; version: PillVersion }>>([]);
   const [selectedPillId, setSelectedPillId] = useState<string>(externalSelectedPillId ?? PRIMARY_PILL_ID);
   const [versions, setVersions] = useState<PillVersion[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
@@ -167,15 +170,34 @@ export function IntelligencePills({
     setError(null);
     try {
       const all = await getPills();
+      // Show one row per pill_id, but prefer approved/active version as the representative.
+      // If there's also a draft/in_review version, surface it as a secondary line.
       const byId = new Map<string, PillVersion>();
+      const drafts = new Map<string, PillVersion>();
       for (const p of all) {
+        if (p.status === "DRAFT" || p.status === "IN_REVIEW") {
+          drafts.set(p.pill_id, p);
+        }
         const existing = byId.get(p.pill_id);
         if (!existing || p.version > existing.version) {
           byId.set(p.pill_id, p);
         }
       }
+      // If the representative is not approved but there is an approved version, prefer approved
+      for (const [id, p] of byId) {
+        if (p.status !== "APPROVED") {
+          const approved = all.find((x) => x.pill_id === id && x.status === "APPROVED");
+          if (approved) byId.set(id, approved);
+        }
+      }
       const unique = Array.from(byId.values());
       setPills(unique);
+      // Attach draft versions for display in the registry
+      const draftList: Array<{ pillId: string; version: PillVersion }> = [];
+      for (const [id, v] of drafts) {
+        draftList.push({ pillId: id, version: v });
+      }
+      setDraftVersions(draftList);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -270,6 +292,7 @@ export function IntelligencePills({
       {/* Pill selector */}
       <PillRegistry
         pills={pills}
+        draftVersions={draftVersions}
         selectedPillId={selectedPillId}
         onSelect={handleSelectPill}
       />
@@ -307,10 +330,12 @@ export function IntelligencePills({
 
 function PillRegistry({
   pills,
+  draftVersions,
   selectedPillId,
   onSelect,
 }: {
   pills: PillVersion[];
+  draftVersions: Array<{ pillId: string; version: PillVersion }>;
   selectedPillId: string;
   onSelect: (id: string) => void;
 }) {
@@ -332,22 +357,40 @@ function PillRegistry({
             </tr>
           </thead>
           <tbody>
-            {pills.map((p) => (
-              <tr
-                key={p.pill_id}
-                className={`pill-table-row ${p.pill_id === selectedPillId ? "selected" : ""}`}
-                onClick={() => onSelect(p.pill_id)}
-              >
-                <td>
-                  <div style={{ fontWeight: 600 }}>{p.content.name}</div>
-                  <div className="tech-meta">{p.pill_id}</div>
-                </td>
-                <td>{p.content.domain}</td>
-                <td><span className="code-inline">v{p.version}</span></td>
-                <td><span className={statusBadgeClass(p.status)}>{STATUS_LABELS[p.status]}</span></td>
-                <td>{p.owner}</td>
-              </tr>
-            ))}
+            {pills.map((p) => {
+              const draft = draftVersions.find((d) => d.pillId === p.pill_id);
+              return (
+                <Fragment key={p.pill_id}>
+                  <tr
+                    className={`pill-table-row ${p.pill_id === selectedPillId ? "selected" : ""}`}
+                    onClick={() => onSelect(p.pill_id)}
+                  >
+                    <td>
+                      <div style={{ fontWeight: 600 }}>{p.content.name}</div>
+                      <div className="tech-meta">{p.pill_id}</div>
+                    </td>
+                    <td>{p.content.domain}</td>
+                    <td><span className="code-inline">v{p.version}</span></td>
+                    <td><span className={statusBadgeClass(p.status)}>{STATUS_LABELS[p.status]}</span></td>
+                    <td>{p.owner}</td>
+                  </tr>
+                  {draft && (
+                    <tr
+                      className={`pill-table-row pill-table-row-sub ${p.pill_id === selectedPillId ? "selected" : ""}`}
+                      onClick={() => onSelect(p.pill_id)}
+                    >
+                      <td style={{ paddingLeft: 24 }}>
+                        <div className="text-muted text-sm">↳ candidate revision</div>
+                      </td>
+                      <td />
+                      <td><span className="code-inline">v{draft.version.version}</span></td>
+                      <td><span className={statusBadgeClass(draft.version.status)}>{STATUS_LABELS[draft.version.status]}</span></td>
+                      <td>{draft.version.author}</td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -885,12 +928,18 @@ function ValidationObligations({ pill, defaultOpen }: { pill: PillVersion; defau
 
   return (
     <Collapsible title="Regression / Validation Obligations" meta={`${evaluation.length} cases`} defaultOpen={defaultOpen}>
-      {evaluation.map((tc, i) => {
+      {(() => {
+        // Build titles and detect collisions for uniqueness
+        const rawTitles = evaluation.map((tc) => buildRegressionTitle(tc));
+        const titleCounts = new Map<string, number>();
+        for (const t of rawTitles) titleCounts.set(t, (titleCounts.get(t) ?? 0) + 1);
+        return evaluation.map((tc, i) => {
         const id = (tc.id as string) ?? `case-${i}`;
         const expectedDecision = (tc.expected_decision as string) ?? "ABSTAIN";
         const expectedActions = (tc.expected_actions as string[]) ?? [];
         const expectedBlocked = (tc.expected_blocked as string[]) ?? [];
-        const title = buildRegressionTitle(tc);
+        let title = rawTitles[i] || id;
+        if ((titleCounts.get(title) ?? 0) > 1) title = `${title} (${id.replace(/_/g, " ")})`;
         const isNew = pill.previous_version && newCaseIds && newCaseIds.size > 0 && id === "flat-but-backflow";
 
         return (
@@ -923,7 +972,8 @@ function ValidationObligations({ pill, defaultOpen }: { pill: PillVersion; defau
             </div>
           </div>
         );
-      })}
+      });
+      })()}
       <div className="callout callout-info mt-16">
         Approved regression obligations are inherited by successor versions and cannot be
         silently removed or weakened.

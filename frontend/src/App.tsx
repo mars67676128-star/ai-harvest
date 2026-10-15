@@ -7,9 +7,22 @@ import { KnowledgeEvolution } from "./components/KnowledgeEvolution";
 
 type View = "operational" | "pills" | "evolution";
 
+const ROLE_STORAGE_KEY = "ai-harvest-role";
+
+function loadSavedRole(): string {
+  try {
+    const saved = localStorage.getItem(ROLE_STORAGE_KEY);
+    if (saved && ["viewer", "operator", "expert", "reviewer", "approver"].includes(saved)) {
+      setRole(saved);
+      return saved;
+    }
+  } catch { /* ignore */ }
+  return "operator";
+}
+
 export default function App() {
   const [view, setView] = useState<View>("operational");
-  const [role, setRoleState] = useState("operator");
+  const [role, setRoleState] = useState(loadSavedRole);
   const [health, setHealth] = useState<{
     status: string;
     environment: string;
@@ -40,6 +53,7 @@ export default function App() {
   const handleRoleChange = useCallback((r: string) => {
     setRole(r);
     setRoleState(r);
+    try { localStorage.setItem(ROLE_STORAGE_KEY, r); } catch { /* ignore */ }
   }, []);
 
   // Compute sidebar badge counts based on role
@@ -162,6 +176,7 @@ export default function App() {
                 setPillsSelectedId(pillId);
                 setView("pills");
               }}
+              onGoToLiveCase={() => setView("operational")}
               onRefreshPills={() => {
                 getPills().then(setPills).catch(() => {});
               }}

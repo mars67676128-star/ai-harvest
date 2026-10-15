@@ -43,9 +43,16 @@ function fmtDate(iso: string | null): string {
   return iso.slice(0, 19).replace("T", " ") + " UTC";
 }
 
+function fmtHash(hash: string): string {
+  if (!hash) return "—";
+  return hash.length > 16 ? hash.slice(0, 12) + "…" : hash;
+}
+
 function capitaliseActor(actor: string): string {
   if (!actor) return "—";
-  return actor.charAt(0).toUpperCase() + actor.slice(1);
+  // Strip "demo-" prefix and capitalise: "demo-operator" → "Operator"
+  const name = actor.replace(/^demo[-_]/, "");
+  return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 // --- Main component ---
@@ -54,10 +61,12 @@ export function KnowledgeEvolution({
   preselectedRecId,
   onGoToPill,
   onRefreshPills,
+  onGoToLiveCase,
 }: {
   preselectedRecId?: string | null;
   onGoToPill?: (pillId: string) => void;
   onRefreshPills?: () => void;
+  onGoToLiveCase?: () => void;
 }) {
   const role = getRole();
   const [recs, setRecs] = useState<RecommendationRecord[]>([]);
@@ -138,33 +147,42 @@ export function KnowledgeEvolution({
     setDiff(null);
 
     let candidatePill: PillVersion | null = null;
+    let diffLoaded = false;
 
     // Load pill versions
     try {
       const vers = await getPillVersions(OPS_ID);
       setPillVersions(vers);
       // Find DRAFT (candidate) if exists
-      const draft = vers.find((v) => v.status === "DRAFT" || v.status === "IN_REVIEW") ?? null;
+      const draft = vers.find((v) => v.status === "DRAFT" || v.status === "IN_REVIEW" || v.status === "APPROVED" || v.status === "REJECTED") ?? null;
       if (draft) {
         setCandidate(draft);
         candidatePill = draft;
-        // Load diff
-        try {
-          const d = await getPillDiff(OPS_ID, draft.previous_version ?? "1.0.0", draft.version);
-          setDiff(d);
-        } catch { /* ignore */ }
+        // Load diff (only if not already APPROVED/REJECTED)
+        if (draft.status === "DRAFT" || draft.status === "IN_REVIEW") {
+          try {
+            const d = await getPillDiff(OPS_ID, draft.previous_version ?? "1.0.0", draft.version);
+            setDiff(d);
+            diffLoaded = true;
+          } catch { /* ignore */ }
+        }
       }
     } catch { /* ignore */ }
 
-    // Update step state — based on the candidate pill only
+    // Check if feedback was submitted (evidence with kind "feedback" in candidate pill)
+    const hasFeedback = candidatePill
+      ? candidatePill.content.evidence.some((e) => e.kind === "feedback")
+      : false;
+
+    // Update step state — derived purely from backend state
     setStepDone({
       outcomeDone: !!rec.outcome,
-      feedbackDone: !!rec.outcome, // feedback requires outcome first
+      feedbackDone: !!rec.outcome && hasFeedback,
       proposalDone: !!candidatePill,
-      diffDone: !!diff,
+      diffDone: diffLoaded,
       testsDone: !!candidatePill?.validation,
     });
-  }, [diff]);
+  }, []);
 
   useEffect(() => {
     loadData();
@@ -172,9 +190,8 @@ export function KnowledgeEvolution({
 
   // Re-load data on role change (some endpoints require specific roles)
   useEffect(() => {
-    if (selectedRec) {
-      refreshState(selectedRec);
-    }
+    // Full reload on role change to rebuild from backend state
+    loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role]);
 
@@ -284,7 +301,31 @@ export function KnowledgeEvolution({
           pillVersions={pillVersions}
           candidate={candidate}
           onGoToPill={onGoToPill}
+          onDeprecated={async (updated) => {
+            setCandidate(updated);
+            const vers = await getPillVersions(OPS_ID);
+            setPillVersions(vers);
+            onRefreshPills?.();
+          }}
         />
+      ) : currentStep === "outcome" && !selectedRec.human_decision ? (
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">Step 1: Record Outcome</span>
+            <span className="card-meta">Role: Operator</span>
+          </div>
+          <div className="card-body">
+            <div className="callout callout-info">
+              <strong>No escalation recorded yet.</strong> Record the escalation on the Live Case first to
+              start the Knowledge Evolution flow.
+            </div>
+            <div className="mt-8">
+              <button className="btn btn-primary" onClick={() => onGoToLiveCase?.()}>
+                Record the escalation on the Live Case first →
+              </button>
+            </div>
+          </div>
+        </div>
       ) : currentStep === "outcome" ? (
         <OutcomeStep
           rec={selectedRec}
@@ -334,9 +375,17 @@ export function KnowledgeEvolution({
         <TestsStep
           candidate={candidate}
           canAct={canDoCurrentStep}
+          onReviewed={async (updated) => {
+            setCandidate(updated);
+            await refreshState(selectedRec);
+          }}
           onValidated={async (updated) => {
             setCandidate(updated);
-            setStepDone((s) => ({ ...s, testsDone: true }));
+            await refreshState(selectedRec);
+          }}
+          onRejected={async (updated) => {
+            setCandidate(updated);
+            await refreshState(selectedRec);
           }}
         />
       ) : currentStep === "approval" ? (
@@ -354,6 +403,10 @@ export function KnowledgeEvolution({
               proposalDone: true,
             }));
             onRefreshPills?.();
+          }}
+          onRejected={async (rejected) => {
+            setCandidate(rejected);
+            await refreshState(selectedRec);
           }}
         />
       ) : null}
@@ -411,10 +464,15 @@ function computeCurrentStep(
     return "tests";
   }
   if (candidate.status === "IN_REVIEW") {
-    if (!candidate.validation) return "tests";
+    // Reviewer must record review AND validate — both are backend-confirmed
+    const hasReview = !!candidate.review;
+    const hasValidation = !!candidate.validation;
+    if (!hasReview) return "tests";
+    if (!hasValidation) return "tests";
     return "approval";
   }
-  if (candidate.status === "APPROVED") return "approval"; // all done
+  if (candidate.status === "APPROVED" || candidate.status === "DEPRECATED") return "approval"; // all done
+  if (candidate.status === "REJECTED") return "tests"; // rejected — back to tests step
   return "outcome";
 }
 
@@ -720,13 +778,21 @@ function DiffStep({
         <div className="section-divider" />
         <div className="section-heading">Regression Cases</div>
         <div className="mb-16">
-          {candidate.content.evaluation.map((tc, i) => {
+          {(() => {
+            const eval_ = candidate.content.evaluation;
+            // Build titles and detect collisions
+            const rawTitles = eval_.map((tc) => buildRegressionTitleFromInputs(tc as Record<string, unknown>));
+            const titleCounts = new Map<string, number>();
+            for (const t of rawTitles) titleCounts.set(t, (titleCounts.get(t) ?? 0) + 1);
+            return eval_.map((tc, i) => {
             const id = (tc.id as string) ?? `case-${i}`;
             const isNew = id === "flat-but-backflow";
             const expectedDecision = (tc.expected_decision as string) ?? "ABSTAIN";
             const expectedActions = (tc.expected_actions as string[]) ?? [];
             const expectedBlocked = (tc.expected_blocked as string[]) ?? [];
-            const title = buildRegressionTitleFromInputs(tc as Record<string, unknown>) || id;
+            let title = rawTitles[i] || id;
+            // Disambiguate when multiple cases share the same title
+            if ((titleCounts.get(title) ?? 0) > 1) title = `${title} (${id.replace(/_/g, " ")})`;
             const decisionLabel = expectedDecision === "ESCALATE" ? "Escalate" : expectedDecision === "HUMAN_REVIEW" ? "Human review" : "Abstain — not enough data";
             return (
               <div key={i} className={`regression-row ${!isNew ? "locked" : ""}`}>
@@ -762,7 +828,8 @@ function DiffStep({
                 )}
               </div>
             );
-          })}
+          });
+          })()}
         </div>
 
         {/* Actions */}
@@ -897,21 +964,45 @@ function formatValue(val: unknown): string {
 function TestsStep({
   candidate,
   canAct,
+  onReviewed,
   onValidated,
+  onRejected,
 }: {
   candidate: PillVersion | null;
   canAct: boolean;
+  onReviewed: (updated: PillVersion) => void;
   onValidated: (updated: PillVersion) => void;
+  onRejected: (updated: PillVersion) => void;
 }) {
+  const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleValidate = async () => {
-    if (!candidate) return;
+  if (!candidate) return null;
+
+  const review = candidate.review as Record<string, unknown> | null;
+  const validation = candidate.validation as Record<string, unknown> | null;
+  const results = validation?.results as Array<Record<string, unknown>> | undefined;
+  const passed = validation?.passed === true;
+
+  const handleReview = async () => {
     setSubmitting(true);
     setError(null);
     try {
-      const updated = await transitionPill(OPS_ID, candidate.version, "validate", "Regression cases passed.");
+      const updated = await transitionPill(OPS_ID, candidate.version, "review", note.trim() || "Reviewed regression cases and content.");
+      onReviewed(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleValidate = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const updated = await transitionPill(OPS_ID, candidate.version, "validate", note.trim() || "Regression cases passed.");
       onValidated(updated);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -920,61 +1011,114 @@ function TestsStep({
     }
   };
 
-  if (!candidate) return null;
-
-  const validation = candidate.validation as Record<string, unknown> | null;
-  const results = validation?.results as Array<Record<string, unknown>> | undefined;
-  const passed = validation?.passed === true;
+  const handleReject = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const updated = await transitionPill(OPS_ID, candidate.version, "reject", note.trim() || "Rejected with reason.");
+      onRejected(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <div className="card">
       <div className="card-header">
-        <span className="card-title">Step 5: Run Tests (Validation)</span>
+        <span className="card-title">Step 5: Review &amp; Tests</span>
         <span className="card-meta">Role: Reviewer</span>
       </div>
       <div className="card-body">
-        {validation ? (
-          <div>
-            <div className="flex gap-8 mb-16 flex-wrap">
-              <span className={passed ? "badge badge-success" : "badge badge-danger"}>
-                {passed ? "All tests passed" : "Tests failed"}
-              </span>
-              {results && (
-                <span className="badge badge-neutral">
-                  {results.filter((r) => r.passed === true).length}/{results.length} cases
+        {/* Review gate */}
+        <div className="mb-16">
+          <div className="section-heading">Review Gate</div>
+          {review ? (
+            <div className="kv">
+              <div><dt>Reviewed by</dt><dd>{capitaliseActor(String(review.actor ?? "—"))} <span className="demo-persona">· demo persona</span></dd></div>
+              <div><dt>Note</dt><dd>{String(review.note ?? "—")}</dd></div>
+              <div><dt>Content hash</dt><dd>{fmtHash(String(review.content_hash ?? ""))}</dd></div>
+            </div>
+          ) : (
+            <div className="text-dim mb-8">
+              Record a review to confirm the candidate content has no unresolved questions or contradictions.
+            </div>
+          )}
+        </div>
+
+        <div className="section-divider" />
+
+        {/* Validation gate */}
+        <div className="mb-16 mt-16">
+          <div className="section-heading">Validation Gate</div>
+          {validation ? (
+            <div>
+              <div className="flex gap-8 mb-16 flex-wrap">
+                <span className={passed ? "badge badge-success" : "badge badge-danger"}>
+                  {passed ? "All tests passed" : "Tests failed"}
                 </span>
+                {results && (
+                  <span className="badge badge-neutral">
+                    {results.filter((r) => r.passed === true).length}/{results.length} cases
+                  </span>
+                )}
+              </div>
+              <div className="kv">
+                <div><dt>Validated by</dt><dd>{capitaliseActor(String(validation.actor ?? "—"))} <span className="demo-persona">· demo persona</span></dd></div>
+                <div><dt>Note</dt><dd>{String(validation.note ?? "—")}</dd></div>
+              </div>
+              {results && (
+                <div className="mt-16">
+                  {results.map((r, i) => {
+                    const caseId = (r.case_id as string) ?? `case-${i}`;
+                    const resultPassed = r.passed === true;
+                    return (
+                      <div key={i} className="regression-row">
+                        <div className="regression-row-header">
+                          <span className="regression-row-title">{caseId.replace(/_/g, " ")}</span>
+                          <span className="regression-row-arrow">→</span>
+                          <span className={resultPassed ? "badge badge-success" : "badge badge-danger"}>
+                            {resultPassed ? "Passed" : "Failed"}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
-            {results && (
-              <div className="mb-16">
-                {results.map((r, i) => {
-                  const caseId = (r.case_id as string) ?? `case-${i}`;
-                  const resultPassed = r.passed === true;
-                  return (
-                    <div key={i} className="regression-row">
-                      <div className="regression-row-header">
-                        <span className="regression-row-title">{caseId.replace(/_/g, " ")}</span>
-                        <span className="regression-row-arrow">→</span>
-                        <span className={resultPassed ? "badge badge-success" : "badge badge-danger"}>
-                          {resultPassed ? "Passed" : "Failed"}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div>
-            <div className="text-dim mb-16">
+          ) : (
+            <div className="text-dim mb-8">
               Run the regression suite against the candidate. All inherited cases must pass.
             </div>
-            <div className="callout callout-info mb-16">
-              The validation runs all evaluation cases deterministically. Inherited regression
-              obligations cannot be weakened.
-            </div>
-            {error && <div className="error-box mb-16">{error}</div>}
+          )}
+        </div>
+
+        {/* Actions */}
+        {error && <div className="error-box mb-16">{error}</div>}
+        <div className="mb-16">
+          <div className="section-heading">Note (optional)</div>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={2}
+            className="note-input"
+            placeholder="Add a note for the audit trail…"
+            disabled={submitting || !canAct}
+          />
+        </div>
+        <div className="flex gap-8 flex-wrap">
+          {!review && (
+            <button
+              className="btn btn-primary"
+              onClick={handleReview}
+              disabled={submitting || !canAct}
+            >
+              {submitting ? "Recording…" : "Record Review"}
+            </button>
+          )}
+          {review && !validation && (
             <button
               className="btn btn-primary"
               onClick={handleValidate}
@@ -982,8 +1126,18 @@ function TestsStep({
             >
               {submitting ? "Running tests…" : "Run Validation"}
             </button>
-          </div>
-        )}
+          )}
+          {review && !validation && (
+            <button
+              className="btn btn-danger"
+              onClick={handleReject}
+              disabled={submitting || !canAct || !note.trim()}
+              title={note.trim() ? "" : "A reason is required to reject"}
+            >
+              {submitting ? "Rejecting…" : "Reject with reason"}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -995,11 +1149,14 @@ function ApprovalStep({
   candidate,
   canAct,
   onApproved,
+  onRejected,
 }: {
   candidate: PillVersion | null;
   canAct: boolean;
   onApproved: (approved: PillVersion) => void;
+  onRejected: (rejected: PillVersion) => void;
 }) {
+  const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1008,8 +1165,22 @@ function ApprovalStep({
     setSubmitting(true);
     setError(null);
     try {
-      const approved = await transitionPill(OPS_ID, candidate.version, "approve", "Approved via Knowledge Evolution flow.");
+      const approved = await transitionPill(OPS_ID, candidate.version, "approve", note.trim() || "Approved via Knowledge Evolution flow.");
       onApproved(approved);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleReject = async () => {
+    if (!candidate) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const rejected = await transitionPill(OPS_ID, candidate.version, "reject", note.trim() || "Rejected with reason.");
+      onRejected(rejected);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1020,6 +1191,7 @@ function ApprovalStep({
   if (!candidate) return null;
 
   const approval = candidate.approval as Record<string, unknown> | null;
+  const isRejected = candidate.status === "REJECTED";
 
   return (
     <div className="card">
@@ -1039,6 +1211,15 @@ function ApprovalStep({
               <div><dt>Note</dt><dd>{String(approval.note ?? "—")}</dd></div>
             </div>
           </div>
+        ) : isRejected ? (
+          <div>
+            <div className="flex gap-8 mb-16">
+              <span className="badge badge-danger">Rejected</span>
+            </div>
+            <div className="callout callout-info mb-16">
+              This candidate was rejected. The active version (v{candidate.previous_version ?? "1.0.0"}) remains in production.
+            </div>
+          </div>
         ) : (
           <div>
             <div className="callout callout-warning mb-16">
@@ -1049,14 +1230,35 @@ function ApprovalStep({
             <div className="text-dim mb-16">
               Only the pill owner (approver) who is not the author can approve.
             </div>
+            <div className="mb-16">
+              <div className="section-heading">Note (optional for approve, required for reject)</div>
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                rows={2}
+                className="note-input"
+                placeholder="Add a note for the audit trail…"
+                disabled={submitting || !canAct}
+              />
+            </div>
             {error && <div className="error-box mb-16">{error}</div>}
-            <button
-              className="btn btn-primary"
-              onClick={handleApprove}
-              disabled={submitting || !canAct}
-            >
-              {submitting ? "Approving…" : `Approve v${candidate.version}`}
-            </button>
+            <div className="flex gap-8 flex-wrap">
+              <button
+                className="btn btn-primary"
+                onClick={handleApprove}
+                disabled={submitting || !canAct}
+              >
+                {submitting ? "Approving…" : `Approve v${candidate.version}`}
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={handleReject}
+                disabled={submitting || !canAct || !note.trim()}
+                title={note.trim() ? "" : "A reason is required to reject"}
+              >
+                {submitting ? "Rejecting…" : "Reject with reason"}
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -1070,11 +1272,19 @@ function PostApprovalTimeline({
   pillVersions,
   candidate,
   onGoToPill,
+  onDeprecated,
 }: {
   pillVersions: PillVersion[];
   candidate: PillVersion | null;
   onGoToPill?: (pillId: string) => void;
+  onDeprecated?: (updated: PillVersion) => void;
 }) {
+  const role = getRole();
+  const [deprecateNote, setDeprecateNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canDeprecate = role === "approver" && candidate?.status === "APPROVED";
   // Sort versions: oldest first
   const sorted = [...pillVersions].sort((a, b) => {
     const av = a.version.split(".").map(Number);
@@ -1131,6 +1341,45 @@ function PostApprovalTimeline({
             </div>
           ))}
         </div>
+
+        {/* Deprecate action for approver */}
+        {canDeprecate && (
+          <div className="mt-16">
+            <div className="section-divider mb-16" />
+            <div className="section-heading">Deprecate Version</div>
+            <div className="text-dim mb-8">
+              Deprecating v{candidate.version} marks it as no longer suitable for use. This action is irreversible.
+            </div>
+            {error && <div className="error-box mb-16">{error}</div>}
+            <textarea
+              value={deprecateNote}
+              onChange={(e) => setDeprecateNote(e.target.value)}
+              rows={2}
+              className="note-input mb-8"
+              placeholder="Reason for deprecation (required)…"
+              disabled={submitting}
+            />
+            <button
+              className="btn btn-danger"
+              onClick={async () => {
+                if (!candidate || !deprecateNote.trim()) return;
+                setSubmitting(true);
+                setError(null);
+                try {
+                  const updated = await transitionPill(OPS_ID, candidate.version, "deprecate", deprecateNote.trim());
+                  onDeprecated?.(updated);
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setSubmitting(false);
+                }
+              }}
+              disabled={submitting || !deprecateNote.trim()}
+            >
+              {submitting ? "Deprecating…" : `Deprecate v${candidate.version}`}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

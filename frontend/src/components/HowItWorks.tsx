@@ -22,7 +22,7 @@ const STEPS = [
   {
     n: 4, title: "Learn", who: "Everyone",
     body: "What actually happened feeds back. AI proposes a revised pill; people review the change, run the tests and decide whether to release it.",
-    example: "Drain backflow discovered → v1.1 proposed → reviewed → approved",
+    example: "Drain backflow discovered → candidate proposed → reviewed → approved",
   },
 ];
 
@@ -31,14 +31,14 @@ const ROLES = [
   { role: "Expert", who: `Senior technician whose know-how is captured — ${PERSONAS.expert.name}`, can: "Check AI proposals against their expertise, submit for review, revise after rejection" },
   { role: "Reviewer", who: `A different senior engineer — ${PERSONAS.reviewer.name}`, can: "Independently review changes, run regression tests, reject with a reason" },
   { role: "Approver", who: `Owner of the knowledge area — ${PERSONAS.approver.name}`, can: "Release a new version (which supersedes the old one) or retire a version" },
-  { role: "Viewer", who: "Management, auditors, colleagues", can: "Read every pill and decision — change nothing" },
+  { role: "Viewer", who: "Management, auditors, colleagues", can: "Inspect Intelligence Pills and governance metadata; operational recommendations remain role-restricted" },
 ];
 
 const PRINCIPLES = [
   { t: "AI never decides", b: "Decisions come from approved, deterministic rules. AI only drafts, proposes and explains — and everything it produces is labelled." },
   { t: "Nothing changes silently", b: "Approved pills are immutable. Every change is a new version with a visible diff, inherited tests and named sign-offs." },
   { t: "People stay accountable", b: "Escalations, reviews and releases are recorded against a role in an audit trail. No one approves their own work." },
-  { t: "Keppel owns the knowledge", b: "Pills are portable, versioned records (JSON / PDF) — independent of any AI vendor or model." },
+  { t: "The organisation owns the knowledge", b: "Pills are portable, versioned records (JSON / PDF) — independent of any AI vendor or model." },
 ];
 
 export function HowItWorks({ onStart }: { onStart: () => void }) {

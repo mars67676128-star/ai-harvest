@@ -29,7 +29,7 @@ const ROLE_INTRO: Record<string, string> = {
   expert: "You own the knowledge. You review AI proposals and submit them for independent review.",
   reviewer: "You independently review candidate knowledge and run the regression tests.",
   approver: "You release approved knowledge into operations — or keep the current version active.",
-  viewer: "You can read every pill and decision, but cannot change anything.",
+  viewer: "You can inspect Intelligence Pills and governance metadata. Operational recommendations remain role-restricted.",
 };
 
 

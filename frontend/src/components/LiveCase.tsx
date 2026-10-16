@@ -48,12 +48,12 @@ const PILL_LABELS: Record<string, string> = {
 };
 
 const OBS_LABELS: Record<string, string> = {
-  water_rise_mm_min: "Water Rise Rate",
-  pump_running: "Pump Running",
-  critical_equipment_exposed: "Critical Equipment Exposed",
-  alternative_route_verified: "Alternative Route Verified",
-  tenant_arrivals_expected: "Tenant Arrivals Expected",
-  drain_backflow: "Drain Backflow",
+  water_rise_mm_min: "Water level change",
+  pump_running: "Pump light on",
+  critical_equipment_exposed: "Electrical equipment at risk",
+  alternative_route_verified: "Other entrance checked safe",
+  tenant_arrivals_expected: "Tenants arriving",
+  drain_backflow: "Water backing up from the drain",
 };
 
 const EVIDENCE_LABELS: Record<string, string> = {
@@ -98,15 +98,29 @@ function extractEscalationRoles(escalations: string[]): string[] {
   return [...new Set(roles)];
 }
 
-function buildDemoObservations() {
+// What the night shift sees. Defaults = the night of the incident in the story.
+export interface Readings {
+  water: "rising" | "steady" | "falling";
+  pump: boolean;
+  backflow: "unchecked" | "yes" | "no";
+  equipment: boolean;
+  route: boolean;
+  tenants: boolean;
+}
+const DEFAULT_READINGS: Readings = { water: "rising", pump: true, backflow: "unchecked", equipment: false, route: false, tenants: true };
+const WATER_RATE: Record<Readings["water"], number> = { rising: 3, steady: 0, falling: -2 };
+
+function buildDemoObservations(r: Readings) {
   const now = new Date().toISOString();
   const raw: Record<string, { value: number | boolean; unit: string }> = {
-    water_rise_mm_min: { value: 3, unit: "mm/min" },
-    pump_running: { value: true, unit: "" },
-    critical_equipment_exposed: { value: false, unit: "" },
-    alternative_route_verified: { value: false, unit: "" },
-    tenant_arrivals_expected: { value: true, unit: "" },
+    water_rise_mm_min: { value: WATER_RATE[r.water], unit: "mm/min" },
+    pump_running: { value: r.pump, unit: "" },
+    critical_equipment_exposed: { value: r.equipment, unit: "" },
+    alternative_route_verified: { value: r.route, unit: "" },
+    tenant_arrivals_expected: { value: r.tenants, unit: "" },
   };
+  // "Not checked" means the reading is simply not supplied — the pill must notice it is missing.
+  if (r.backflow !== "unchecked") raw.drain_backflow = { value: r.backflow === "yes", unit: "" };
   const obs: Record<string, Observation> = {};
   for (const [k, v] of Object.entries(raw)) {
     obs[k] = {
@@ -120,14 +134,15 @@ function buildDemoObservations() {
   return obs;
 }
 
-function buildCaseBody() {
+function buildCaseBody(r: Readings) {
+  const water = r.water === "rising" ? "water rising" : r.water === "steady" ? "water steady" : "water falling";
   return {
-    title: "Green pump indicator, rising basement water",
+    title: `Pump light ${r.pump ? "on" : "off"}, ${water}`,
     asset_id: "harbour-exchange-demo",
     asset_type: "office",
     equipment: "basement_sump",
     context: "wet_weather",
-    observations: buildDemoObservations(),
+    observations: buildDemoObservations(r),
     synthetic: true,
   };
 }
@@ -146,6 +161,8 @@ export function LiveCase({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [action, setAction] = useState<string>("");
+  const [readings, setReadings] = useState<Readings>(DEFAULT_READINGS);
+  const set = <K extends keyof Readings>(k: K, v: Readings[K]) => setReadings((prev) => ({ ...prev, [k]: v }));
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -180,7 +197,7 @@ export function LiveCase({
     setAction("Running assessment…");
     setError(null);
     try {
-      const newCase = await createCase(buildCaseBody());
+      const newCase = await createCase(buildCaseBody(readings));
       const rec = await invokeCase(newCase.id, [OPS_ID, TENANT_ID], true);
       setActiveRec(rec.id); // Knowledge Evolution follows the newest assessment
       setSelectedRec(rec);
@@ -275,35 +292,36 @@ export function LiveCase({
         working, the basement floods — damaging equipment and blocking the way tenants get in and out.
       </div>
       <div className="plain-english">
-        The basement pump shows a green "running" light, but water is still rising at 3&nbsp;mm/min.
-        A running pump does not prove effective drainage. The alternative access route has not been
-        verified, so tenant continuity and asset operations are in conflict. AI HARVEST escalates
-        this to the duty facilities engineer and tenant duty manager — no autonomous action is
-        authorised.
+        <b>What the night shift sees right now.</b> Change any reading to match the situation, then
+        assess it. The starting values are the night in the story: the pump's light is on, yet the
+        water keeps rising. The pills only advise — nothing in the building is switched or sent automatically.
       </div>
 
-      {/* Status tiles */}
-      <div className="tile-grid" style={{ marginBottom: 20 }}>
-        <div className="tile">
-          <div className="tile-label">Pump Status</div>
-          <div className="tile-value warning">Running</div>
-          <div className="tile-sub">Drainage not confirmed</div>
-        </div>
-        <div className="tile">
-          <div className="tile-label">Water Trend</div>
-          <div className="tile-value warning">Rising — 3 mm/min</div>
-          <div className="tile-sub">Active monsoon conditions</div>
-        </div>
-        <div className="tile">
-          <div className="tile-label">Alternative Route</div>
-          <div className="tile-value danger">Unverified</div>
-          <div className="tile-sub">Access plan blocked</div>
-        </div>
-        <div className="tile">
-          <div className="tile-label">Critical Equipment</div>
-          <div className="tile-value neutral">Not exposed</div>
-          <div className="tile-sub">No immediate asset damage</div>
-        </div>
+      {/* Readings — editable so viewers can see how each one changes the advice */}
+      <div className="reading-grid">
+        <ReadingTile label="Water level in the basement pit" sub="Measured by the level sensor"
+          value={readings.water} onChange={(v) => set("water", v)}
+          options={[["rising", "Rising"], ["steady", "Steady"], ["falling", "Falling"]]}
+          tone={readings.water === "rising" ? "warning" : "neutral"} />
+        <ReadingTile label="Pump's “running” light" sub="On does not prove the water is actually leaving"
+          value={readings.pump ? "on" : "off"} onChange={(v) => set("pump", v === "on")}
+          options={[["on", "On"], ["off", "Off"]]} tone="neutral" />
+        <ReadingTile
+          label={<>Water backing up from the drain <Term k="backflow" tag>backflow</Term></>}
+          sub="Outside drains are full, so water pushes back in — the level can look steady while drainage is failing"
+          value={readings.backflow} onChange={(v) => set("backflow", v)}
+          options={[["unchecked", "Not checked"], ["yes", "Yes"], ["no", "No"]]}
+          tone={readings.backflow === "yes" ? "danger" : readings.backflow === "unchecked" ? "warning" : "neutral"}
+          badge={opsPill?.content.inputs.some((i) => i.key === "drain_backflow") ? `New check — added in v${opsPill.version}` : undefined} />
+        <ReadingTile label="Electrical equipment at risk" sub="Water near switchboards or pump controls"
+          value={readings.equipment ? "yes" : "no"} onChange={(v) => set("equipment", v === "yes")}
+          options={[["no", "No"], ["yes", "Yes"]]} tone={readings.equipment ? "danger" : "neutral"} />
+        <ReadingTile label="Other entrance checked safe" sub="Has someone walked the alternative route for tenants?"
+          value={readings.route ? "yes" : "no"} onChange={(v) => set("route", v === "yes")}
+          options={[["no", "Not yet"], ["yes", "Yes"]]} tone={readings.route ? "neutral" : "warning"} />
+        <ReadingTile label="Tenants arriving soon" sub="e.g. morning arrivals within the hour"
+          value={readings.tenants ? "yes" : "no"} onChange={(v) => set("tenants", v === "yes")}
+          options={[["yes", "Yes"], ["no", "No"]]} tone="neutral" />
       </div>
 
       {error && <div className="error-box">{error}</div>}
@@ -315,9 +333,12 @@ export function LiveCase({
             ? `Showing recommendation from ${selectedRec.created_at.slice(11, 19)} UTC`
             : "No recommendations yet"}
         </span>
-        <button className="btn btn-primary" onClick={handleCreateAndInvoke} disabled={!!action}>
-          {action || "Run Operational Assessment"}
-        </button>
+        <div className="flex gap-8" style={{ alignItems: "center" }}>
+          <button className="btn btn-quiet" onClick={() => setReadings(DEFAULT_READINGS)} disabled={!!action}>Reset to the story</button>
+          <button className="btn btn-primary" onClick={handleCreateAndInvoke} disabled={!!action}>
+            {action || "Assess this situation"}
+          </button>
+        </div>
       </div>
 
       {approvedPills.length === 0 && (
@@ -870,6 +891,34 @@ function Collapsible({
         </div>
       </div>
       {open && <div className="collapsible-body">{children}</div>}
+    </div>
+  );
+}
+
+function ReadingTile<V extends string>({
+  label, sub, value, options, onChange, tone, badge,
+}: {
+  label: React.ReactNode;
+  sub: string;
+  value: V;
+  options: Array<[V, string]>;
+  onChange: (v: V) => void;
+  tone: "warning" | "danger" | "neutral";
+  badge?: string;
+}) {
+  return (
+    <div className={`reading-tile tone-${tone}`}>
+      {badge && <span className="reading-badge">{badge}</span>}
+      <div className="reading-label">{label}</div>
+      <div className="seg" role="radiogroup">
+        {options.map(([v, text]) => (
+          <button key={v} type="button" role="radio" aria-checked={value === v}
+            className={`seg-btn ${value === v ? "on" : ""}`} onClick={() => onChange(v)}>
+            {text}
+          </button>
+        ))}
+      </div>
+      <div className="reading-sub">{sub}</div>
     </div>
   );
 }

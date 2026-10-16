@@ -505,7 +505,7 @@ function OutcomeStep({
                 <span className="text-dim">Issue resolved</span>
               </label>
             </div>
-            {error && <div className="error-box mb-16">{error}</div>}
+            {error && <div className="error-box mb-16">{friendlyError(error)}</div>}
             <button
               className="btn btn-primary"
               onClick={handleSubmit}
@@ -577,7 +577,7 @@ function FeedbackStep({
           <div className="section-heading">Proposed Version</div>
           <span className="code-inline">v{proposedVersion}</span>
         </div>
-        {error && <div className="error-box mb-16">{error}</div>}
+        {error && <div className="error-box mb-16">{friendlyError(error)}</div>}
         <button
           className="btn btn-primary"
           onClick={handleSubmit}
@@ -644,7 +644,7 @@ function ProposalStep({
           The AI reads the feedback and current pill content, then proposes a revised draft.
           The draft includes new rules, inputs, and regression cases derived from the correction.
         </div>
-        {error && <div className="error-box mb-16">{error}</div>}
+        {error && <div className="error-box mb-16">{friendlyError(error)}</div>}
         <button
           className="btn btn-primary"
           onClick={handlePropose}
@@ -794,7 +794,7 @@ function DiffStep({
         </div>
 
         {/* Actions */}
-        {error && <div className="error-box mb-16">{error}</div>}
+        {error && <div className="error-box mb-16">{friendlyError(error)}</div>}
         {canAct && isDraft && (
           <button
             className="btn btn-primary"
@@ -1059,7 +1059,7 @@ function TestsStep({
         </div>
 
         {/* Actions */}
-        {error && <div className="error-box mb-16">{error}</div>}
+        {error && <div className="error-box mb-16">{friendlyError(error)}</div>}
         <div className="mb-16">
           <div className="section-heading">Note (optional)</div>
           <textarea
@@ -1188,7 +1188,7 @@ function ApprovalStep({
                 disabled={submitting || !canAct}
               />
             </div>
-            {error && <div className="error-box mb-16">{error}</div>}
+            {error && <div className="error-box mb-16">{friendlyError(error)}</div>}
             <div className="flex gap-8 flex-wrap">
               <button
                 className="btn btn-primary"
@@ -1315,7 +1315,7 @@ function PostApprovalTimeline({
               Deprecating v{candidate.version} retires it from operational use. This is irreversible and is
               not part of the normal learning flow — use only when a version must be withdrawn.
             </div>
-            {error && <div className="error-box mb-16">{error}</div>}
+            {error && <div className="error-box mb-16">{friendlyError(error)}</div>}
             <textarea
               value={deprecateNote}
               onChange={(e) => setDeprecateNote(e.target.value)}
@@ -1482,4 +1482,15 @@ const ACTION_DISPLAY: Record<string, string> = {
 
 function formatActionName(id: string): string {
   return ACTION_DISPLAY[id] ?? id.replace(/_/g, " ");
+}
+
+// Plain-language versions of the backend's demo-mode errors.
+function friendlyError(msg: string): string {
+  if (msg.includes("MOCK_FIXTURE_ONLY"))
+    return "The offline demo AI has already used its one recorded revision (the drain-backflow correction) on this database — the improved pill is already approved. To run the learning loop again, start a fresh demo database. With a live AI model connected, any correction would work.";
+  if (msg.includes("STALE_PARENT"))
+    return "The pill this proposal was based on is no longer the current approved version. Start again from a new assessment.";
+  if (msg.includes("VERSION_EXISTS"))
+    return "That version number is already taken. Reload the page and try again.";
+  return msg;
 }

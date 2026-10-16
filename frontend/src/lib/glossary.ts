@@ -33,6 +33,12 @@ export const GLOSSARY: GlossaryEntry[] = [
   { key: "evidence", term: "Evidence (for a rule)",
     plain: "Where a rule came from: an expert interview, a past incident, operator feedback or public guidance. Every rule must point to at least one.",
     example: "“Expert interview: the Harbour Exchange green-light incident.”" },
+  { key: "backflow", term: "Drain backflow",
+    plain: "When the drains outside are already full (e.g. in a monsoon downpour), water pushes back into the building through the drain instead of leaving. The pit's level can look steady even though the pump isn't really getting rid of water.",
+    example: "Pump light on, level flat, but water is coming back in — the night shift must still call the engineer." },
+  { key: "capture", term: "Capture (guided interview)",
+    plain: "How know-how gets in: an expert is interviewed about a real incident with questions designed to surface what isn't in any manual — what they noticed, what a junior would miss, when the rule doesn't apply, who must take over. AI then drafts structured rules from the answers for people to check.",
+    example: "“What would a junior operator commonly miss?”" },
   { key: "rule-trace", term: "Rule trace",
     plain: "The list of rules that matched this situation, and the reading that set each one off. It is the “show your working” behind a recommendation." },
   { key: "provenance", term: "Provenance",
@@ -78,7 +84,7 @@ export const GLOSSARY_BY_KEY: Record<string, GlossaryEntry> = Object.fromEntries
 // Fictional demo people for each role — so the app reads like a team's workspace.
 export interface Persona { name: string; title: string; initials: string; tone: string }
 export const PERSONAS: Record<string, Persona> = {
-  operator: { name: "Aisha Rahman", title: "Night-shift operator", initials: "AR", tone: "#2f7de1" },
+  operator: { name: "Aisha Rahman", title: "Asset Operations Manager (on duty)", initials: "AR", tone: "#2f7de1" },
   expert: { name: "Tan Wei Ming", title: "Senior M&E technician", initials: "TW", tone: "#0d7377" },
   reviewer: { name: "Priya Nair", title: "Facilities engineer", initials: "PN", tone: "#b7791f" },
   approver: { name: "Daniel Lim", title: "Head of building operations", initials: "DL", tone: "#6d4bd8" },

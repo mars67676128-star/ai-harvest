@@ -27,7 +27,7 @@ const STEPS = [
 ];
 
 const ROLES = [
-  { role: "Operator", who: `Building operations staff on shift — in this demo, ${PERSONAS.operator.name}`, can: "Run assessments, record escalations, report outcomes and feedback" },
+  { role: "Operator", who: `Asset Operations Manager on duty — in this demo, ${PERSONAS.operator.name}`, can: "Run assessments, record escalations, report outcomes and feedback" },
   { role: "Expert", who: `Senior technician whose know-how is captured — ${PERSONAS.expert.name}`, can: "Check AI proposals against their expertise, submit for review, revise after rejection" },
   { role: "Reviewer", who: `A different senior engineer — ${PERSONAS.reviewer.name}`, can: "Independently review changes, run regression tests, reject with a reason" },
   { role: "Approver", who: `Owner of the knowledge area — ${PERSONAS.approver.name}`, can: "Release a new version (which supersedes the old one) or retire a version" },

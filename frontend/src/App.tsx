@@ -5,10 +5,11 @@ import { LiveCase } from "./components/LiveCase";
 import { IntelligencePills } from "./components/IntelligencePills";
 import { KnowledgeEvolution } from "./components/KnowledgeEvolution";
 import { Home } from "./components/Home";
+import { Capture } from "./components/Capture";
 import { PERSONAS } from "./lib/glossary";
 import { HowItWorks } from "./components/HowItWorks";
 
-type View = "home" | "how" | "operational" | "pills" | "evolution";
+type View = "home" | "how" | "operational" | "pills" | "evolution" | "capture";
 
 const ROLE_STORAGE_KEY = "ai-harvest-role";
 
@@ -148,6 +149,13 @@ export default function App() {
           <div className="sidebar-group">
             <div className="sidebar-group-label">Intelligence</div>
             <button
+              className={`sidebar-item ${view === "capture" ? "active" : ""}`}
+              onClick={() => setView("capture")}
+            >
+              <CaptureIcon />
+              Capture know-how
+            </button>
+            <button
               className={`sidebar-item ${view === "pills" ? "active" : ""}`}
               onClick={() => setView("pills")}
             >
@@ -169,6 +177,15 @@ export default function App() {
 
         <main className="app-content">
           {view === "how" && <HowItWorks onStart={() => setView("operational")} />}
+          {view === "capture" && (
+            <Capture
+              key={`capture-${role}`}
+              onGoToPill={(pillId: string) => {
+                setPillsSelectedId(pillId);
+                setView("pills");
+              }}
+            />
+          )}
           {view === "home" && (
             <Home
               key={`home-${role}`}
@@ -264,6 +281,16 @@ function HowIcon() {
       <circle cx="12" cy="12" r="9" />
       <path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14" />
       <path d="M12 17h.01" />
+    </svg>
+  );
+}
+
+function CaptureIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <path d="M12 18v3" />
     </svg>
   );
 }

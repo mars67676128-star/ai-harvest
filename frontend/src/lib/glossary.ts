@@ -49,7 +49,7 @@ export const GLOSSARY: GlossaryEntry[] = [
     plain: "Hard limits that apply whatever the readings say — things the system will never do or suggest.",
     example: "Never switch equipment, change access or message tenants automatically." },
   { key: "heuristic", term: "Rule of thumb (heuristic)",
-    plain: "Something an expert knows from experience rather than from the manual. Capturing these is the point of AI HARVEST.",
+    plain: "Something an expert knows from experience rather than from the manual. Capturing these is the point of Sifu.",
     example: "“A running pump indication does not prove effective drainage.”" },
   { key: "escalate", term: "Escalate",
     plain: "Hand the decision to a named person with the authority to act, because the situation is beyond routine.",

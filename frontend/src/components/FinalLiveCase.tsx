@@ -272,7 +272,7 @@ export function LiveCase({
       <div className="plain-english">
         {scenario === "backflow"
           ? "This tests the learned backflow exception: the water trend looks flat, but verified drain backflow means routine monitoring alone is unsafe."
-          : "The pump reports RUNNING while water is rising. AI HARVEST treats the contradiction as the meaningful signal and escalates; Tenant Experience independently blocks an unverified access plan."}
+          : "The pump reports RUNNING while water is rising. Sifu treats the contradiction as the meaningful signal and escalates; Tenant Experience independently blocks an unverified access plan."}
       </div>
 
       <div className="tile-grid" style={{ marginBottom: 20 }}>

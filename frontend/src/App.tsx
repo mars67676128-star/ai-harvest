@@ -102,7 +102,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-topbar">
-        <div className="topbar-brand">AI <span className="accent">HARVEST</span></div>
+        <div className="topbar-brand">Sifu<span className="brand-sub">AI HARVEST</span></div>
         <div className="topbar-spacer" />
         <div className="topbar-right">
           {health && <span className="topbar-env"><span className="topbar-env-dot" />{health.environment} · {health.provider}{health.synthetic_demo ? " · synthetic" : ""}</span>}
@@ -121,7 +121,7 @@ export default function App() {
           <div className="sidebar-group">
             <div className="sidebar-group-label">Overview</div>
             <button className={`sidebar-item ${view === "home" ? "active" : ""}`} onClick={() => setView("home")}><HomeIcon />Home</button>
-            <button className={`sidebar-item ${view === "how" ? "active" : ""}`} onClick={() => setView("how")}><HowIcon />How it works</button>
+            <button className={`sidebar-item ${view === "how" ? "active" : ""}`} onClick={() => setView("how")}><HowIcon />Guide</button>
           </div>
           <div className="sidebar-group">
             <div className="sidebar-group-label">Operations</div>

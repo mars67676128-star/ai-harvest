@@ -955,3 +955,18 @@ details[open] > summary::before { content: "▾ "; }
 .draft-why { font-size: 12.5px; color: var(--text-muted); margin-top: 6px; font-style: italic; }
 .text-danger { color: var(--danger); }
 .next-steps { margin: 4px 0 0; padding-left: 20px; font-size: 14.5px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 6px; }
+
+/* Sifu brand */
+.topbar-brand { letter-spacing: 0.01em; font-size: 17px; }
+.brand-sub { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; color: var(--mint); opacity: 0.85; margin-left: 2px; align-self: center; padding-top: 2px; }
+@media (max-width: 1000px) { .brand-sub { display: none; } }
+.name-note { display: flex; gap: 16px; align-items: center; margin-top: 24px; padding: 16px 18px; background: var(--surface); border-radius: var(--r-md); box-shadow: var(--shadow-sm); font-size: 14px; color: var(--text-secondary); max-width: 760px; }
+.name-note-zh { font-size: 30px; font-weight: 800; color: var(--accent); flex-shrink: 0; }
+
+/* Sifu logo mark (app-icon tile so the dark half stays visible on the ink rail) */
+.topbar-brand::before {
+  width: 26px; height: 26px; border-radius: 8px;
+  background: #ffffff url("/sifu-logo.png") center / 82% no-repeat;
+}
+
+@media (max-width: 1000px) { .topbar-brand { font-size: 0; } }

@@ -88,11 +88,10 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
   return (
     <div className="capture">
       <div className="home-eyebrow">Capture know-how</div>
-      <h1 className="home-title">Draw out what isn't written down</h1>
+      <h1 className="home-title">Record an expert's know-how</h1>
       <p className="home-sub">
-        Senior staff carry judgement no manual holds. AI HARVEST gets it out with a short
-        <Term k="capture"> guided interview</Term> about a real incident. AI then drafts structured rules from the
-        answers — and nothing is used until the expert, an independent reviewer and the owner have checked it.
+        Go through the 7 <Term k="capture">guided questions</Term> about a real incident. AI drafts rules from the
+        answers. Nothing is used until the expert, an independent reviewer and the owner have checked it.
       </p>
 
       {/* 1. Questions */}

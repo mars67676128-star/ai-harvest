@@ -144,7 +144,7 @@ export function Home({ onGoToHowItWorks, onGoToLiveCase, onGoToEvolution, onGoTo
     for (const r of recs ?? []) {
       if (r.result.decision === "ESCALATE" && !r.human_decision && role === "operator") {
         tasks.push({ key: `dec-${r.id}`, tone: "warning", title: "Escalation awaiting your decision",
-          detail: `Assessment at ${r.created_at.slice(11, 16)} UTC — AI HARVEST will not act on its own.`,
+          detail: `Assessment at ${r.created_at.slice(11, 16)} UTC — Sifu will not act on its own.`,
           cta: "Open case", go: onGoToLiveCase });
       } else if (r.human_decision && !r.outcome && role === "operator") {
         tasks.push({ key: `out-${r.id}`, tone: "action", title: "Record what actually happened",
@@ -331,7 +331,7 @@ export function Home({ onGoToHowItWorks, onGoToLiveCase, onGoToEvolution, onGoTo
           </div>
 
           <div className="how-teaser">
-            New to the team? <a onClick={() => onGoToHowItWorks()}>How it works</a> · <a onClick={() => onGoToHowItWorks("glossary")}>Glossary of terms</a>
+            New to the team? Read the <a onClick={() => onGoToHowItWorks()}>Guide</a> · <a onClick={() => onGoToHowItWorks("glossary")}>Glossary</a>
           </div>
         </section>
 

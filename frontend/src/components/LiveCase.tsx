@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { DomainIcon } from "./DomainIcon";
+import { Term } from "./Term";
+import { persona } from "../lib/glossary";
 import { setActiveRec } from "../lib/demoState";
 import type {
   CaseRecord,
@@ -46,12 +48,12 @@ const PILL_LABELS: Record<string, string> = {
 };
 
 const OBS_LABELS: Record<string, string> = {
-  water_rise_mm_min: "Water Rise Rate",
-  pump_running: "Pump Running",
-  critical_equipment_exposed: "Critical Equipment Exposed",
-  alternative_route_verified: "Alternative Route Verified",
-  tenant_arrivals_expected: "Tenant Arrivals Expected",
-  drain_backflow: "Drain Backflow",
+  water_rise_mm_min: "Water level change",
+  pump_running: "Pump light on",
+  critical_equipment_exposed: "Electrical equipment at risk",
+  alternative_route_verified: "Other entrance checked safe",
+  tenant_arrivals_expected: "Tenants arriving",
+  drain_backflow: "Water backing up from the drain",
 };
 
 const EVIDENCE_LABELS: Record<string, string> = {
@@ -87,6 +89,7 @@ function extractEscalationRoles(escalations: string[]): string[] {
   const roles: string[] = [];
   for (const esc of escalations) {
     const colonIdx = esc.indexOf(":");
+    if (/^[A-Z_]+:/.test(esc)) continue; // system codes like MISSING_INPUT are not people
     if (colonIdx >= 0) {
       const role = esc.slice(colonIdx + 1).trim();
       if (role) roles.push(role);
@@ -95,15 +98,29 @@ function extractEscalationRoles(escalations: string[]): string[] {
   return [...new Set(roles)];
 }
 
-function buildDemoObservations() {
+// What the night shift sees. Defaults = the night of the incident in the story.
+export interface Readings {
+  water: "rising" | "steady" | "falling";
+  pump: boolean;
+  backflow: "unchecked" | "yes" | "no";
+  equipment: boolean;
+  route: boolean;
+  tenants: boolean;
+}
+const DEFAULT_READINGS: Readings = { water: "rising", pump: true, backflow: "unchecked", equipment: false, route: false, tenants: true };
+const WATER_RATE: Record<Readings["water"], number> = { rising: 3, steady: 0, falling: -2 };
+
+function buildDemoObservations(r: Readings) {
   const now = new Date().toISOString();
   const raw: Record<string, { value: number | boolean; unit: string }> = {
-    water_rise_mm_min: { value: 3, unit: "mm/min" },
-    pump_running: { value: true, unit: "" },
-    critical_equipment_exposed: { value: false, unit: "" },
-    alternative_route_verified: { value: false, unit: "" },
-    tenant_arrivals_expected: { value: true, unit: "" },
+    water_rise_mm_min: { value: WATER_RATE[r.water], unit: "mm/min" },
+    pump_running: { value: r.pump, unit: "" },
+    critical_equipment_exposed: { value: r.equipment, unit: "" },
+    alternative_route_verified: { value: r.route, unit: "" },
+    tenant_arrivals_expected: { value: r.tenants, unit: "" },
   };
+  // "Not checked" means the reading is simply not supplied — the pill must notice it is missing.
+  if (r.backflow !== "unchecked") raw.drain_backflow = { value: r.backflow === "yes", unit: "" };
   const obs: Record<string, Observation> = {};
   for (const [k, v] of Object.entries(raw)) {
     obs[k] = {
@@ -117,14 +134,15 @@ function buildDemoObservations() {
   return obs;
 }
 
-function buildCaseBody() {
+function buildCaseBody(r: Readings) {
+  const water = r.water === "rising" ? "water rising" : r.water === "steady" ? "water steady" : "water falling";
   return {
-    title: "Green pump indicator, rising basement water",
+    title: `Pump light ${r.pump ? "on" : "off"}, ${water}`,
     asset_id: "harbour-exchange-demo",
     asset_type: "office",
     equipment: "basement_sump",
     context: "wet_weather",
-    observations: buildDemoObservations(),
+    observations: buildDemoObservations(r),
     synthetic: true,
   };
 }
@@ -143,6 +161,8 @@ export function LiveCase({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [action, setAction] = useState<string>("");
+  const [readings, setReadings] = useState<Readings>(DEFAULT_READINGS);
+  const set = <K extends keyof Readings>(k: K, v: Readings[K]) => setReadings((prev) => ({ ...prev, [k]: v }));
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -177,7 +197,7 @@ export function LiveCase({
     setAction("Running assessment…");
     setError(null);
     try {
-      const newCase = await createCase(buildCaseBody());
+      const newCase = await createCase(buildCaseBody(readings));
       const rec = await invokeCase(newCase.id, [OPS_ID, TENANT_ID], true);
       setActiveRec(rec.id); // Knowledge Evolution follows the newest assessment
       setSelectedRec(rec);
@@ -272,35 +292,36 @@ export function LiveCase({
         working, the basement floods — damaging equipment and blocking the way tenants get in and out.
       </div>
       <div className="plain-english">
-        The basement pump shows a green "running" light, but water is still rising at 3&nbsp;mm/min.
-        A running pump does not prove effective drainage. The alternative access route has not been
-        verified, so tenant continuity and asset operations are in conflict. AI HARVEST escalates
-        this to the duty facilities engineer and tenant duty manager — no autonomous action is
-        authorised.
+        <b>What the night shift sees right now.</b> Change any reading to match the situation, then
+        assess it. The starting values are the night in the story: the pump's light is on, yet the
+        water keeps rising. The pills only advise — nothing in the building is switched or sent automatically.
       </div>
 
-      {/* Status tiles */}
-      <div className="tile-grid" style={{ marginBottom: 20 }}>
-        <div className="tile">
-          <div className="tile-label">Pump Status</div>
-          <div className="tile-value warning">Running</div>
-          <div className="tile-sub">Drainage not confirmed</div>
-        </div>
-        <div className="tile">
-          <div className="tile-label">Water Trend</div>
-          <div className="tile-value warning">Rising — 3 mm/min</div>
-          <div className="tile-sub">Active monsoon conditions</div>
-        </div>
-        <div className="tile">
-          <div className="tile-label">Alternative Route</div>
-          <div className="tile-value danger">Unverified</div>
-          <div className="tile-sub">Access plan blocked</div>
-        </div>
-        <div className="tile">
-          <div className="tile-label">Critical Equipment</div>
-          <div className="tile-value neutral">Not exposed</div>
-          <div className="tile-sub">No immediate asset damage</div>
-        </div>
+      {/* Readings — editable so viewers can see how each one changes the advice */}
+      <div className="reading-grid">
+        <ReadingTile label="Water level in the basement pit" sub="Measured by the level sensor"
+          value={readings.water} onChange={(v) => set("water", v)}
+          options={[["rising", "Rising"], ["steady", "Steady"], ["falling", "Falling"]]}
+          tone={readings.water === "rising" ? "warning" : "neutral"} />
+        <ReadingTile label="Pump's “running” light" sub="On does not prove the water is actually leaving"
+          value={readings.pump ? "on" : "off"} onChange={(v) => set("pump", v === "on")}
+          options={[["on", "On"], ["off", "Off"]]} tone="neutral" />
+        <ReadingTile
+          label={<>Water backing up from the drain <Term k="backflow" tag>backflow</Term></>}
+          sub="Outside drains are full, so water pushes back in — the level can look steady while drainage is failing"
+          value={readings.backflow} onChange={(v) => set("backflow", v)}
+          options={[["unchecked", "Not checked"], ["yes", "Yes"], ["no", "No"]]}
+          tone={readings.backflow === "yes" ? "danger" : readings.backflow === "unchecked" ? "warning" : "neutral"}
+          badge={opsPill?.content.inputs.some((i) => i.key === "drain_backflow") ? `New check — added in v${opsPill.version}` : undefined} />
+        <ReadingTile label="Electrical equipment at risk" sub="Water near switchboards or pump controls"
+          value={readings.equipment ? "yes" : "no"} onChange={(v) => set("equipment", v === "yes")}
+          options={[["no", "No"], ["yes", "Yes"]]} tone={readings.equipment ? "danger" : "neutral"} />
+        <ReadingTile label="Other entrance checked safe" sub="Has someone walked the alternative route for tenants?"
+          value={readings.route ? "yes" : "no"} onChange={(v) => set("route", v === "yes")}
+          options={[["no", "Not yet"], ["yes", "Yes"]]} tone={readings.route ? "neutral" : "warning"} />
+        <ReadingTile label="Tenants arriving soon" sub="e.g. morning arrivals within the hour"
+          value={readings.tenants ? "yes" : "no"} onChange={(v) => set("tenants", v === "yes")}
+          options={[["yes", "Yes"], ["no", "No"]]} tone="neutral" />
       </div>
 
       {error && <div className="error-box">{error}</div>}
@@ -312,9 +333,12 @@ export function LiveCase({
             ? `Showing recommendation from ${selectedRec.created_at.slice(11, 19)} UTC`
             : "No recommendations yet"}
         </span>
-        <button className="btn btn-primary" onClick={handleCreateAndInvoke} disabled={!!action}>
-          {action || "Run Operational Assessment"}
-        </button>
+        <div className="flex gap-8" style={{ alignItems: "center" }}>
+          <button className="btn btn-quiet" onClick={() => setReadings(DEFAULT_READINGS)} disabled={!!action}>Reset to the story</button>
+          <button className="btn btn-primary" onClick={handleCreateAndInvoke} disabled={!!action}>
+            {action || "Assess this situation"}
+          </button>
+        </div>
       </div>
 
       {approvedPills.length === 0 && (
@@ -363,9 +387,9 @@ function RecommendationDetail({
   const governanceExpanded = role === "expert" || role === "reviewer" || role === "approver";
 
   const decisionBadge = (d: string) => {
-    if (d === "ESCALATE") return <span className="badge badge-warning">Escalate</span>;
-    if (d === "HUMAN_REVIEW") return <span className="badge badge-info">Needs review</span>;
-    return <span className="badge badge-neutral">Abstain</span>;
+    if (d === "ESCALATE") return <span className="badge badge-warning"><Term k="escalate">Escalate</Term></span>;
+    if (d === "HUMAN_REVIEW") return <span className="badge badge-info"><Term k="needs-review">Needs review</Term></span>;
+    return <span className="badge badge-neutral"><Term k="abstain">Abstain</Term></span>;
   };
 
   const escalationRoles = extractEscalationRoles(result.escalations);
@@ -381,7 +405,7 @@ function RecommendationDetail({
     <div>
       {/* Source attribution — WHO decided */}
       <div className="source-attribution">
-        <span className="source-label">This recommendation comes from:</span>
+        <span className="source-label">This recommendation comes from these <Term k="pill">pills</Term>:</span>
         {capabilities.map((cap, i) => (
           <span key={cap.pill_id} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
             {i > 0 && <span className="text-muted">+</span>}
@@ -401,7 +425,7 @@ function RecommendationDetail({
       {/* Escalation banner */}
       {isEscalation && (
         <div className="escalation-banner">
-          <span className="escalation-title">Escalation Required</span>
+          <span className="escalation-title"><Term k="escalate">Escalation</Term> required</span>
           <span className="no-exec-chip">No autonomous execution</span>
           {escalationRoles.length > 0 && (
             <div className="flex gap-8 flex-wrap" style={{ alignItems: "center" }}>
@@ -414,10 +438,24 @@ function RecommendationDetail({
         </div>
       )}
 
+      {result.decision === "ABSTAIN" && (() => {
+        const missing = [...new Set([...result.escalations, ...capabilities.flatMap((c) => c.escalations)]
+          .filter((e) => e.startsWith("MISSING_INPUT"))
+          .map((e) => obsLabel(e.slice(e.indexOf(":") + 1).trim())))];
+        return (
+          <div className="callout callout-info">
+            <strong><Term k="abstain">No recommendation</Term> — not enough information.</strong>{" "}
+            {missing.length > 0
+              ? <>The approved pill now also needs a reading for <b>{missing.join(", ")}</b>, which this assessment didn't include. Rather than guess, it stays silent and a qualified person must assess.</>
+              : <>A reading the pill needs is missing or unreliable, so it won't guess. A qualified person must assess.</>}
+          </div>
+        );
+      })()}
+
       {/* Key heuristic quote — near the top, attributed */}
       {opsCap && opsCap.trace.some((t) => t.rule_id === "running-is-not-draining") && (
         <div className="heuristic-callout">
-          <div className="heuristic-label">Key Expert Heuristic</div>
+          <div className="heuristic-label">The expert's <Term k="heuristic">rule of thumb</Term></div>
           <div className="heuristic-text">
             &ldquo;A running pump indication does not prove effective drainage.&rdquo;
           </div>
@@ -429,24 +467,27 @@ function RecommendationDetail({
 
       {/* Cross-domain conflict card — most prominent element after the summary */}
       {showConflict && (
+        <>
+        <div className="conflict-head">Two pills looked at this situation and disagree — the safer one wins.</div>
         <div className="conflict-card">
           <div className="conflict-side conflict-side-proposes">
-            <div className="conflict-domain"><DomainIcon domain="Asset Operations" size={26} /> Asset Operations proposes</div>
-            <div className="conflict-action">Review access plan</div>
+            <div className="conflict-domain"><DomainIcon domain="Asset Operations" size={26} /> <span><Term k="asset-ops">Equipment</Term> pill suggests</span></div>
+            <div className="conflict-action">Plan another way in for tenants</div>
             <div className="conflict-reason">
-              The pill recommends reviewing the alternative access route to keep tenants safe.
+              The basement entrance may flood, so it suggests reviewing an alternative route.
             </div>
           </div>
           <div className="conflict-divider">→</div>
           <div className="conflict-side conflict-side-blocks">
-            <div className="conflict-domain"><DomainIcon domain="Tenant Experience" size={26} /> Tenant Experience blocks</div>
-            <div className="conflict-action">Access plan blocked</div>
+            <div className="conflict-domain"><DomainIcon domain="Tenant Experience" size={26} /> <span><Term k="tenant">Tenant-safety</Term> pill says: not yet</span></div>
+            <div className="conflict-action">Plan on hold (<Term k="blocked">blocked</Term>)</div>
             <div className="conflict-reason">
-              The alternative route is unverified. Tenant Experience blocks the access plan until
-              it is confirmed safe.
+              Nobody has confirmed the other route is safe. Until someone checks it, tenants
+              must not be sent that way.
             </div>
           </div>
         </div>
+        </>
       )}
 
       {/* Escalation outcome — who must act */}
@@ -491,13 +532,13 @@ function RecommendationDetail({
       {/* Blocked actions */}
       {result.blocked_actions.length > 0 && (
         <div className="callout callout-danger">
-          <strong>Blocked actions:</strong>{" "}
+          <strong><Term k="blocked">Blocked</Term> for now:</strong>{" "}
           {result.blocked_actions.map(actionLabel).join(", ")}
         </div>
       )}
 
       {/* Collapsible: Evidence — Observations */}
-      <Collapsible title="Evidence — Verified Observations" meta={`${Object.keys(observations).length} observations`} defaultOpen={governanceExpanded}>
+      <Collapsible title={<>Readings used <Term k="observation" tag>evidence</Term></>} hint="What the pills were told about the situation — value, source and time." meta={`${Object.keys(observations).length} observations`} defaultOpen={governanceExpanded}>
         <div className="obs-grid">
           {Object.entries(observations).map(([key, obs]) => (
             <div key={key} className="obs-tile">
@@ -515,7 +556,7 @@ function RecommendationDetail({
       </Collapsible>
 
       {/* Collapsible: Rule Trace */}
-      <Collapsible title="Rule Trace — Why This Fired" meta={`${capabilities.reduce((n, c) => n + c.trace.length, 0)} rules fired`} defaultOpen={governanceExpanded}>
+      <Collapsible title={<>Why this recommendation <Term k="rule-trace" tag>rule trace</Term></>} hint="Each expert rule that matched, and the reading that set it off." meta={`${capabilities.reduce((n, c) => n + c.trace.length, 0)} rules fired`} defaultOpen={governanceExpanded}>
         {capabilities.map((cap) => (
           <div key={cap.pill_id} className="mb-16">
             <div className="flex-between mb-8">
@@ -577,7 +618,7 @@ function RecommendationDetail({
       </Collapsible>
 
       {/* Collapsible: Pill Provenance */}
-      <Collapsible title="Pill Provenance — Exact Versions & Hashes" meta={`${capabilities.length} capabilities`} defaultOpen={governanceExpanded}>
+      <Collapsible title={<>Which knowledge was used <Term k="provenance" tag>provenance</Term></>} hint="The exact approved pill versions, and who wrote, reviewed and approved them." meta={`${capabilities.length} pills`} defaultOpen={governanceExpanded}>
         {capabilities.map((cap) => {
           const pill = cap.pill_id === OPS_ID ? opsPill : cap.pill_id === TENANT_ID ? tenantPill : undefined;
           return (
@@ -594,15 +635,15 @@ function RecommendationDetail({
                 <div><dt>Domain</dt><dd>{cap.domain}</dd></div>
                 {pill && (
                   <>
-                    <div><dt>Owner</dt><dd>{pill.owner}</dd></div>
-                    <div><dt>Reviewers</dt><dd>{pill.reviewers.join(", ")}</dd></div>
-                    <div><dt>Author</dt><dd>{pill.author}</dd></div>
+                    <div><dt>Owner</dt><dd>{persona(pill.owner).name}</dd></div>
+                    <div><dt>Reviewers</dt><dd>{pill.reviewers.map((r) => persona(r).name).join(", ")}</dd></div>
+                    <div><dt>Author</dt><dd>{persona(pill.author).name}</dd></div>
                     <div><dt>Change Reason</dt><dd>{pill.change_reason}</dd></div>
                   </>
                 )}
               </div>
               <div className="mt-8 kv kv-tech">
-                <div><dt>Content Hash</dt><dd>{cap.content_hash}</dd></div>
+                <div><dt><Term k="hash">Content fingerprint</Term></dt><dd>{cap.content_hash}</dd></div>
                 {pill && (
                   <div><dt>Created</dt><dd>{pill.created_at.slice(0, 19).replace("T", " ")} UTC</dd></div>
                 )}
@@ -613,7 +654,7 @@ function RecommendationDetail({
       </Collapsible>
 
       {/* Collapsible: Boundaries */}
-      <Collapsible title="Boundaries — Prohibited Actions & Guardrails" defaultOpen={governanceExpanded}>
+      <Collapsible title={<>What the system will never do <Term k="boundaries" tag>boundaries</Term></>} hint="Hard limits that apply whatever the readings say." defaultOpen={governanceExpanded}>
         {capabilities.map((cap) => (
           <div key={cap.pill_id} className="mb-16">
             <div className="pill-prov-name mb-8">{pillLabel(cap.pill_id)}</div>
@@ -828,11 +869,13 @@ function HumanDecisionArea({
 
 function Collapsible({
   title,
+  hint,
   meta,
   defaultOpen = false,
   children,
 }: {
-  title: string;
+  title: React.ReactNode;
+  hint?: string;
   meta?: string;
   defaultOpen?: boolean;
   children: React.ReactNode;
@@ -841,13 +884,41 @@ function Collapsible({
   return (
     <div className={`collapsible ${open ? "open" : ""}`}>
       <div className="collapsible-trigger" onClick={() => setOpen(!open)}>
-        <span>{title}</span>
+        <span className="coll-title"><span className="coll-title-main">{title}</span>{hint && <span className="coll-hint">{hint}</span>}</span>
         <div className="flex gap-16" style={{ alignItems: "center" }}>
           {meta && <span className="text-muted text-sm">{meta}</span>}
           <span className="collapsible-chevron">▼</span>
         </div>
       </div>
       {open && <div className="collapsible-body">{children}</div>}
+    </div>
+  );
+}
+
+function ReadingTile<V extends string>({
+  label, sub, value, options, onChange, tone, badge,
+}: {
+  label: React.ReactNode;
+  sub: string;
+  value: V;
+  options: Array<[V, string]>;
+  onChange: (v: V) => void;
+  tone: "warning" | "danger" | "neutral";
+  badge?: string;
+}) {
+  return (
+    <div className={`reading-tile tone-${tone}`}>
+      {badge && <span className="reading-badge">{badge}</span>}
+      <div className="reading-label">{label}</div>
+      <div className="seg" role="radiogroup">
+        {options.map(([v, text]) => (
+          <button key={v} type="button" role="radio" aria-checked={value === v}
+            className={`seg-btn ${value === v ? "on" : ""}`} onClick={() => onChange(v)}>
+            {text}
+          </button>
+        ))}
+      </div>
+      <div className="reading-sub">{sub}</div>
     </div>
   );
 }

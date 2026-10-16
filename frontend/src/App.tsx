@@ -7,8 +7,10 @@ import { ExactPillView } from "./components/ExactPillView";
 import { KnowledgeEvolution } from "./components/FinalKnowledgeEvolution";
 import { Home } from "./components/Home";
 import { HowItWorks } from "./components/HowItWorks";
+import { Capture } from "./components/Capture";
+import { PERSONAS } from "./lib/glossary";
 
-type View = "home" | "how" | "operational" | "pills" | "evolution";
+type View = "home" | "how" | "operational" | "pills" | "evolution" | "capture";
 
 const ROLE_STORAGE_KEY = "ai-harvest-role";
 
@@ -38,6 +40,7 @@ export default function App() {
   const [evolutionRecId, setEvolutionRecId] = useState<string | null>(null);
   const [pillsSelectedId, setPillsSelectedId] = useState<string | null>(null);
   const [exactPillVersion, setExactPillVersion] = useState<string | null>(null);
+  const [showBanner, setShowBanner] = useState<boolean>(() => { try { return localStorage.getItem("sifu-banner-dismissed") !== "1"; } catch { return true; } });
 
   useEffect(() => {
     getHealth().then(setHealth).catch(() => {});
@@ -45,6 +48,8 @@ export default function App() {
 
   useEffect(() => {
     getPills().then(setPills).catch(() => {});
+    // Only roles allowed to read recommendations ask for them (no 403s for other roles).
+    if (role !== "operator" && role !== "approver") { setRecommendations([]); return; }
     getRecommendations()
       .then((all) => Promise.all(all.map((r) => getRecommendation(r.id).catch(() => r))))
       .then(setRecommendations)
@@ -100,50 +105,58 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-topbar">
-        <div className="topbar-brand">AI <span className="accent">HARVEST</span></div>
+        <div className="topbar-brand">Sifu<span className="brand-sub">AI HARVEST</span></div>
         <div className="topbar-spacer" />
         <div className="topbar-right">
-          {health && <span className="topbar-env"><span className="topbar-env-dot" />{health.environment} · {health.provider}{health.synthetic_demo ? " · synthetic" : ""}</span>}
+          {health && <span className="topbar-env"><span className="topbar-env-dot" />{health.environment === "demo" ? "Demo" : health.environment} · {health.provider === "mock" ? "offline AI" : health.provider}</span>}
           <select className="role-select" value={role} onChange={(e) => handleRoleChange(e.target.value)}>
-            <option value="viewer">Viewer</option>
-            <option value="operator">Operator</option>
-            <option value="expert">Expert</option>
-            <option value="reviewer">Reviewer</option>
-            <option value="approver">Approver</option>
+            <option value="viewer">Viewer · Guest</option>
+            <option value="operator">Operator · {PERSONAS.operator.name}</option>
+            <option value="expert">Expert · {PERSONAS.expert.name}</option>
+            <option value="reviewer">Reviewer · {PERSONAS.reviewer.name}</option>
+            <option value="approver">Approver · {PERSONAS.approver.name}</option>
           </select>
         </div>
       </header>
 
+      {showBanner && (
+        <div className="demo-banner">
+          <span>Demo environment — all sites, people and readings are fictional.</span>
+          <button onClick={() => { setShowBanner(false); try { localStorage.setItem("sifu-banner-dismissed", "1"); } catch { /* ignore */ } }} aria-label="Dismiss">×</button>
+        </div>
+      )}
       <div className="app-body">
         <nav className="app-sidebar">
           <div className="sidebar-group">
             <div className="sidebar-group-label">Overview</div>
-            <button className={`sidebar-item ${view === "home" ? "active" : ""}`} onClick={() => setView("home")}><HomeIcon />Home</button>
-            <button className={`sidebar-item ${view === "how" ? "active" : ""}`} onClick={() => setView("how")}><HowIcon />How it works</button>
+            <button className={`sidebar-item ${view === "home" ? "active" : ""}`} title="Home" aria-label="Home" onClick={() => setView("home")}><HomeIcon />Home</button>
+            <button className={`sidebar-item ${view === "how" ? "active" : ""}`} title="Guide" aria-label="Guide" onClick={() => setView("how")}><HowIcon />Guide</button>
           </div>
           <div className="sidebar-group">
             <div className="sidebar-group-label">Operations</div>
-            <button className={`sidebar-item ${view === "operational" ? "active" : ""}`} onClick={() => setView("operational")}>
+            <button className={`sidebar-item ${view === "operational" ? "active" : ""}`} title="Live Case" aria-label="Live Case" onClick={() => setView("operational")}>
               <LiveCaseIcon />Live Case
               {computeBadge("operational") && <span className="sidebar-badge">{computeBadge("operational")}</span>}
             </button>
           </div>
           <div className="sidebar-group">
             <div className="sidebar-group-label">Intelligence</div>
-            <button className={`sidebar-item ${view === "pills" ? "active" : ""}`} onClick={() => { setExactPillVersion(null); setView("pills"); }}>
+            <button className={`sidebar-item ${view === "capture" ? "active" : ""}`} title="Capture know-how" aria-label="Capture know-how" onClick={() => setView("capture")}><CaptureIcon />Capture know-how</button>
+            <button className={`sidebar-item ${view === "pills" ? "active" : ""}`} title="Intelligence Pills" aria-label="Intelligence Pills" onClick={() => { setExactPillVersion(null); setView("pills"); }}>
               <PillIcon />Intelligence Pills
               {computeBadge("pills") && <span className="sidebar-badge">{computeBadge("pills")}</span>}
             </button>
-            <button className={`sidebar-item ${view === "evolution" ? "active" : ""}`} onClick={() => { setEvolutionRecId(null); setView("evolution"); }}><EvolutionIcon />Knowledge Evolution</button>
+            <button className={`sidebar-item ${view === "evolution" ? "active" : ""}`} title="Knowledge Evolution" aria-label="Knowledge Evolution" onClick={() => { setEvolutionRecId(null); setView("evolution"); }}><EvolutionIcon />Knowledge Evolution</button>
           </div>
         </nav>
 
         <main className="app-content">
           {view === "how" && <HowItWorks onStart={() => setView("operational")} />}
+          {view === "capture" && <Capture key={`capture-${role}`} onGoToPill={openRegistryPill} />}
           {view === "home" && (
             <Home
               key={`home-${role}`}
-              onGoToHowItWorks={() => setView("how")}
+              onGoToHowItWorks={(section?: string) => { setView("how"); if (section) setTimeout(() => document.getElementById(section)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}
               onGoToLiveCase={() => setView("operational")}
               onGoToEvolution={(recId?: string) => { setEvolutionRecId(recId ?? null); setView("evolution"); }}
               onGoToPill={openRegistryPill}
@@ -199,4 +212,14 @@ function HomeIcon() {
 }
 function HowIcon() {
   return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14" /><path d="M12 17h.01" /></svg>;
+}
+
+function CaptureIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <path d="M12 18v3" />
+    </svg>
+  );
 }

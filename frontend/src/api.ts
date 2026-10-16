@@ -214,3 +214,43 @@ export async function transitionPill(
     { note }
   );
 }
+
+// --- Capture: guided interview → AI extraction (draft pill content) ---
+
+export interface ElicitationQuestion { technique: string; question: string }
+
+export async function getElicitation(): Promise<ElicitationQuestion[]> {
+  return request<ElicitationQuestion[]>("/elicitation");
+}
+
+export interface CaptureRecord {
+  id: string;
+  title: string;
+  transcript: string;
+  domain: string;
+  synthetic: boolean;
+  author: string;
+  created_at: string;
+}
+
+export async function createCapture(body: {
+  title: string;
+  transcript: string;
+  domain: string;
+  synthetic: boolean;
+}): Promise<CaptureRecord> {
+  return request<CaptureRecord>("/captures", "POST", body);
+}
+
+export interface ExtractionRecord {
+  id: string;
+  created_at: string;
+  summary: string;
+  elicitation_gaps: string[];
+  content: import("./types").PillVersion["content"];
+  ai: { provider?: string; model?: string; live?: boolean; prompt_version?: string; [k: string]: unknown };
+}
+
+export async function extractCapture(captureId: string): Promise<ExtractionRecord> {
+  return request<ExtractionRecord>(`/captures/${captureId}/extract`, "POST");
+}

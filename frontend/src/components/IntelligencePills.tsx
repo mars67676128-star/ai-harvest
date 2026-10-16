@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback, Fragment } from "react";
 import type { PillVersion, Status } from "../types";
 import { downloadPillJson, printPillSheet } from "../lib/pillExport";
 import { DomainIcon } from "./DomainIcon";
+import { Term, Avatar } from "./Term";
+import { persona } from "../lib/glossary";
+import { actorLabel, sgTime, readingLabel, conditionsText, cleanText, isDemoDisclaimer } from "../lib/format";
 import {
   getPills,
   getPillVersions,
@@ -43,8 +46,7 @@ function lifecycleIndex(status: Status): number {
 }
 
 function fmtDate(iso: string | null): string {
-  if (!iso) return "—";
-  return iso.slice(0, 19).replace("T", " ") + " UTC";
+  return sgTime(iso);
 }
 
 function fmtHash(hash: string): string {
@@ -78,10 +80,7 @@ function auditEventLabel(event: string): string {
 }
 
 function capitaliseActor(actor: string): string {
-  if (!actor) return "—";
-  // Strip "demo-" prefix and capitalise: "demo-operator" → "Operator"
-  const name = actor.replace(/^demo[-_]/, "");
-  return name.charAt(0).toUpperCase() + name.slice(1);
+  return actorLabel(actor);
 }
 
 function auditEventToLifecycleStep(event: string): number {
@@ -372,14 +371,14 @@ function PillRegistry({
                         <DomainIcon domain={p.content.domain} size={34} />
                         <div>
                           <div style={{ fontWeight: 600 }}>{p.content.name}</div>
-                          <div className="tech-meta">{p.pill_id}</div>
+                          {getRole() !== "operator" && <div className="tech-meta pill-id-meta">{p.pill_id}</div>}
                         </div>
                       </div>
                     </td>
                     <td>{p.content.domain}</td>
                     <td><span className="code-inline">v{p.version}</span></td>
                     <td><span className={statusBadgeClass(p.status)}>{STATUS_LABELS[p.status]}</span></td>
-                    <td>{p.owner}</td>
+                    <td>{persona(p.owner).name}</td>
                   </tr>
                   {draft && (
                     <tr
@@ -392,7 +391,7 @@ function PillRegistry({
                       <td />
                       <td><span className="code-inline">v{draft.version.version}</span></td>
                       <td><span className={statusBadgeClass(draft.version.status)}>{STATUS_LABELS[draft.version.status]}</span></td>
-                      <td>{draft.version.author}</td>
+                      <td>{persona(draft.version.author).name}</td>
                     </tr>
                   )}
                 </Fragment>
@@ -421,6 +420,7 @@ function PillHeader({ pill }: { pill: PillVersion }) {
               <div className="text-muted" style={{ marginTop: 2, fontSize: 14 }}>
                 {pill.content.description}
               </div>
+              <PillByline pill={pill} />
             </div>
           </div>
           <div className="flex gap-8 flex-wrap" style={{ alignItems: "center" }}>
@@ -436,9 +436,33 @@ function PillHeader({ pill }: { pill: PillVersion }) {
           <button className="btn btn-quiet" onClick={() => downloadPillJson(pill)}>
             Export portable JSON
           </button>
-          <span className="text-muted text-sm">Owned by the organisation · independent of any AI vendor</span>
         </div>
       </div>
+    </div>
+  );
+}
+
+// --- Byline: where this knowledge came from and who signed it off (Guru-style trust line) ---
+
+function PillByline({ pill }: { pill: PillVersion }) {
+  const interview = pill.content.evidence.find((e) => e.kind === "expert_interview");
+  const fromFeedback = pill.content.evidence.some((e) => e.kind === "feedback");
+  const author = persona(pill.author);
+  const reviewer = persona(pill.reviewers[0]);
+  const owner = persona(pill.owner);
+  const current = pill.status === "APPROVED";
+  return (
+    <div className="pill-byline">
+      <span className="byline-item">
+        <Avatar actor={pill.author} size={22} />
+        {interview ? <>Captured from an <Term k="evidence">interview</Term> with <b>{author.name}</b></> : <>Written by <b>{author.name}</b></>}
+        {fromFeedback && <> · updated from operator feedback</>}
+      </span>
+      <span className="byline-item"><Avatar actor={pill.reviewers[0] ?? "reviewer"} size={22} /><Term k="review">Reviewed</Term> by <b>{reviewer.name}</b></span>
+      <span className="byline-item"><Avatar actor={pill.owner} size={22} />Owned by <b>{owner.name}</b></span>
+      <span className={`byline-trust ${current ? "ok" : ""}`}>
+        {current ? "✓ Current approved version" : pill.status === "SUPERSEDED" ? "Replaced by a newer version" : "Not in use"}
+      </span>
     </div>
   );
 }
@@ -452,7 +476,7 @@ function KeyHeuristicQuote({ pill }: { pill: PillVersion }) {
   if (!heuristic) return null;
   return (
     <div className="heuristic-callout">
-      <div className="heuristic-label">Key Expert Heuristic</div>
+      <div className="heuristic-label">The expert's <Term k="heuristic">rule of thumb</Term></div>
       <div className="heuristic-text">&ldquo;{heuristic}&rdquo;</div>
       <div className="text-muted text-sm mt-8">
         — {pill.content.name} v{pill.version}
@@ -465,11 +489,13 @@ function KeyHeuristicQuote({ pill }: { pill: PillVersion }) {
 
 function Collapsible({
   title,
+  hint,
   meta,
   defaultOpen = false,
   children,
 }: {
-  title: string;
+  title: React.ReactNode;
+  hint?: string;
   meta?: string;
   defaultOpen?: boolean;
   children: React.ReactNode;
@@ -478,7 +504,7 @@ function Collapsible({
   return (
     <div className={`collapsible ${open ? "open" : ""}`} style={{ marginBottom: 24 }}>
       <div className="collapsible-trigger" onClick={() => setOpen(!open)}>
-        <span>{title}</span>
+        <span className="coll-title"><span className="coll-title-main">{title}</span>{hint && <span className="coll-hint">{hint}</span>}</span>
         <div className="flex gap-16" style={{ alignItems: "center" }}>
           {meta && (
             <span className="badge badge-neutral">{meta}</span>
@@ -514,7 +540,7 @@ function GovernanceLifecycle({
   );
 
   return (
-    <Collapsible title="Governance Lifecycle" meta={`Draft → In Review → Approved`} defaultOpen={defaultOpen}>
+    <Collapsible title="Sign-off history" hint="Who reviewed, tested and approved this version — and when." meta={`Draft → In Review → Approved`} defaultOpen={defaultOpen}>
       {/* Lifecycle stepper */}
       <div className="lifecycle-stepper">
         {LIFECYCLE_STEPS.map((step, i) => {
@@ -558,7 +584,6 @@ function GovernanceLifecycle({
                   </div>
                   <div className="text-sm text-muted" style={{ marginTop: 4 }}>
                     Actor: <strong>{capitaliseActor(entry.actor)}</strong>
-                    <span className="demo-persona"> · demo persona</span>
                   </div>
                 </li>
               ))}
@@ -587,11 +612,11 @@ function GovernanceLifecycle({
 // --- Governance Gate ---
 
 const GATE_FIELD_LABELS: Record<string, string> = {
-  actor: "Actor",
-  at: "Timestamp",
-  content_hash: "Content Hash",
+  actor: "Signed by",
+  at: "When",
+  content_hash: "Content fingerprint",
   note: "Note",
-  passed: "Validation Passed",
+  passed: "All test situations passed",
 };
 
 function GovernanceGate({
@@ -640,8 +665,12 @@ function GovernanceGate({
         {summaryFields.map((field) => {
           const val = record[field];
           if (val === undefined || val === null || val === "") return null;
+          if (field === "content_hash" && getRole() === "operator") return null;
           const display = field === "at" ? fmtDate(String(val)) :
-            field === "content_hash" ? fmtHash(String(val)) : String(val);
+            field === "actor" ? actorLabel(String(val)) :
+            field === "note" ? cleanText(String(val)) :
+            field === "content_hash" ? fmtHash(String(val)) :
+            typeof val === "boolean" ? (val ? "Yes" : "No") : String(val);
           return (
             <div key={field}><dt>{GATE_FIELD_LABELS[field] ?? field}</dt><dd>{display}</dd></div>
           );
@@ -661,9 +690,9 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
   const { scope, inputs, facts, expert_observations, assumptions, exceptions, rules, actions, prohibited_actions, guardrails, dependencies } = content;
 
   return (
-    <Collapsible title="Capability Definition" meta={`${rules.length} rules · ${actions.length} actions`} defaultOpen={defaultOpen}>
+    <Collapsible title="What this pill checks and recommends" hint="When it applies, which readings it needs, and its rules." meta={`${rules.length} rules · ${actions.length} actions`} defaultOpen={defaultOpen}>
       {/* Applicability / Scope */}
-      <div className="section-heading">Applicability & Scope</div>
+      <div className="section-heading">When this applies</div>
       <div className="scope-chips mb-16">
         {scope.asset_types.map((t, i) => <span key={`at-${i}`} className="scope-chip">{t}</span>)}
         {scope.equipment.map((e, i) => <span key={`eq-${i}`} className="scope-chip">{e}</span>)}
@@ -675,19 +704,18 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
       <div className="section-divider" />
 
       {/* Required Inputs */}
-      <div className="section-heading">Required Inputs</div>
+      <div className="section-heading">Readings it needs</div>
       <div className="obs-grid mb-16">
         {inputs.map((inp) => (
           <div key={inp.key} className="input-card">
-            <div className="input-card-name">{inp.key.replace(/_/g, " ")}</div>
-            <div className="input-card-desc">{inp.description}</div>
+            <div className="input-card-name">{readingLabel(inp.key)}</div>
+            {!/^synthetic/i.test(inp.description) && <div className="input-card-desc">{inp.description}</div>}
             <div className="input-card-meta">
-              <span className="input-card-chip">{inp.kind}</span>
+              <span className="input-card-chip">{inp.kind === "boolean" ? "Yes / No" : inp.kind === "number" ? "Number" : "Text"}</span>
               {inp.required && <span className="input-card-chip" style={{ color: "var(--warning)", borderColor: "var(--warning-border)" }}>Required</span>}
               {inp.unit && <span className="input-card-chip">Unit: {inp.unit}</span>}
-              <span className="input-card-chip">Max age: {inp.max_age_seconds}s</span>
+              <span className="input-card-chip">Must be under {Math.round(inp.max_age_seconds / 60)} min old</span>
             </div>
-            <div className="tech-meta mt-8">{inp.key}</div>
           </div>
         ))}
       </div>
@@ -697,13 +725,13 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
       {/* Expert Facts & Heuristics */}
       {(facts.length > 0 || expert_observations.length > 0 || assumptions.length > 0 || exceptions.length > 0) && (
         <>
-          <div className="section-heading">Expert Facts & Heuristics</div>
+          <div className="section-heading">What the expert knows</div>
           <div className="mb-16">
-            {facts.length > 0 && (
+            {facts.filter((f) => !isDemoDisclaimer(f)).length > 0 && (
               <div className="mb-16">
                 <div className="text-muted text-sm mb-8">Facts</div>
                 <ul className="boundary-list">
-                  {facts.map((f, i) => (
+                  {facts.filter((f) => !isDemoDisclaimer(f)).map((f, i) => (
                     <li key={i}><span className="boundary-icon" style={{ color: "var(--accent)" }}>•</span><span>{f}</span></li>
                   ))}
                 </ul>
@@ -745,27 +773,18 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
       )}
 
       {/* Deterministic Rules */}
-      <div className="section-heading">Deterministic Rules</div>
+      <div className="section-heading">Rules (checked the same way every time)</div>
       <div className="mb-16">
         {rules.map((r, i) => (
           <div key={i} className={`rule-card ${r.category}`}>
             <div className="rule-card-head">
               <div>
-                <span className="rule-card-name">{r.id.replace(/_/g, " ")}</span>
-                <div className="tech-meta">{r.id}</div>
+                <span className="rule-card-name">If {conditionsText(r.when).toLowerCase()}</span>
               </div>
               <span className="rule-card-category">{r.category}</span>
             </div>
             <div className="rule-card-rationale">{r.rationale}</div>
-            <div className="rule-card-evidence">
-              <strong>When:</strong>{" "}
-              {r.when.map((w, j) => (
-                <span key={j} style={{ marginLeft: 8 }}>
-                  {w.input.replace(/_/g, " ")} {w.op} {String(w.value)}
-                  {j < r.when.length - 1 ? " ∧" : ""}
-                </span>
-              ))}
-            </div>
+
             {r.recommend.length > 0 && (
               <div className="rule-card-evidence">
                 <strong>Recommend:</strong> {r.recommend.map(actionLabel).join(", ")}
@@ -781,9 +800,11 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
                 <strong>Escalate to:</strong> {r.escalate_to}
               </div>
             )}
-            <div className="rule-card-evidence">
-              <strong>Evidence:</strong> {r.evidence_ids.join(", ")}
-            </div>
+            {getRole() !== "operator" && (
+              <details className="tech-details"><summary>Technical details</summary>
+                <div className="tech-meta">Rule ID: {r.id} · Condition: {r.when.map((w) => `${w.input} ${w.op} ${String(w.value)}`).join(" ∧ ")} · Evidence: {r.evidence_ids.join(", ")}</div>
+              </details>
+            )}
           </div>
         ))}
       </div>
@@ -809,7 +830,7 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
       {/* Guardrails */}
       {guardrails.length > 0 && (
         <>
-          <div className="section-heading">Guardrails</div>
+          <div className="section-heading">Safety limits</div>
           <ul className="boundary-list mb-16">
             {guardrails.map((g, i) => (
               <li key={i}><span className="boundary-icon" style={{ color: "var(--warning)" }}>!</span><span>{g}</span></li>
@@ -822,7 +843,7 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
       {/* Prohibited Actions */}
       {prohibited_actions.length > 0 && (
         <>
-          <div className="section-heading">Prohibited Actions</div>
+          <div className="section-heading">Never allowed</div>
           <ul className="boundary-list mb-16">
             {prohibited_actions.map((p, i) => (
               <li key={i}><span className="boundary-icon">×</span><span>{actionLabel(p)}</span></li>
@@ -871,31 +892,18 @@ function EvidenceProvenance({ pill, defaultOpen }: { pill: PillVersion; defaultO
   const { evidence } = pill.content;
 
   return (
-    <Collapsible title="Evidence & Provenance" meta={`${evidence.length} items`} defaultOpen={defaultOpen}>
+    <Collapsible title={<>Where this knowledge came from <Term k="evidence" tag>evidence</Term></>} hint="The interviews, incidents and feedback behind the rules." meta={`${evidence.length} items`} defaultOpen={defaultOpen}>
       <div className="obs-grid">
         {evidence.map((e) => (
           <div key={e.id} className="input-card">
             <div className="flex-between mb-8">
-              <span className="input-card-name">{e.id.replace(/_/g, " ")}</span>
-              {e.synthetic ? (
-                <span className="badge badge-warning">Synthetic</span>
-              ) : (
-                <span className="badge badge-success">Public context</span>
-              )}
+              <span className="input-card-name">{e.kind === "expert_interview" ? "Expert interview" : e.kind === "public_context" ? "Public guidance" : e.kind === "feedback" ? "Operator feedback" : e.kind === "incident" ? "Past incident" : e.kind}</span>
+              {e.kind === "public_context" && <span className="badge badge-neutral">Context only</span>}
             </div>
-            <div className="input-card-desc">{e.summary}</div>
-            <div className="tech-meta mt-8">{e.citation}</div>
-            <div className="input-card-meta mt-8">
-              <span className="input-card-chip">{e.kind.replace(/_/g, " ")}</span>
-            </div>
-            <div className="tech-meta mt-8">{e.id}</div>
+            <div className="input-card-desc">{cleanText(e.summary)}</div>
+            {/^https?:/.test(e.citation) && <div className="tech-meta mt-8">{e.citation}</div>}
           </div>
         ))}
-      </div>
-      <div className="callout callout-info mt-16">
-        <strong>Provenance distinction:</strong> Synthetic evidence is a demo fixture, not a
-        real expert interview. Public-context evidence provides background only and does not
-        validate the Pill's rules.
       </div>
     </Collapsible>
   );
@@ -914,6 +922,15 @@ function decisionBadgeClass(decision: string): string {
   if (decision === "HUMAN_REVIEW") return "badge badge-info";
   return "badge badge-neutral";
 }
+
+const REGRESSION_TITLES: Record<string, string> = {
+  rising: "Water rising while the pump shows running",
+  stable: "Water steady, pump running, no equipment at risk",
+  critical: "Electrical equipment at risk",
+  missing: "Required readings missing",
+  scope: "Outside this pill's scope (different equipment)",
+  "flat-but-backflow": "Water looks steady but is backing up from the drain",
+};
 
 function buildRegressionTitle(tc: Record<string, unknown>): string {
   const inputs = (tc.inputs as Record<string, unknown>) ?? {};
@@ -934,7 +951,7 @@ function buildRegressionTitle(tc: Record<string, unknown>): string {
   if (arrivals !== undefined) parts.push(arrivals ? "arrivals expected" : "no arrivals");
   if (criticalExposed !== undefined) parts.push(criticalExposed ? "critical exposed" : "no critical exposure");
 
-  return parts.length > 0 ? parts.join(", ") : "Default case";
+  return parts.length > 0 ? parts.join(", ") : "Readings missing";
 }
 
 function ValidationObligations({ pill, defaultOpen }: { pill: PillVersion; defaultOpen: boolean }) {
@@ -946,7 +963,7 @@ function ValidationObligations({ pill, defaultOpen }: { pill: PillVersion; defau
     : null;
 
   return (
-    <Collapsible title="Regression / Validation Obligations" meta={`${evaluation.length} cases`} defaultOpen={defaultOpen}>
+    <Collapsible title={<>Test situations it must pass <Term k="regression" tag>regression tests</Term></>} hint="Saved examples with the answer the pill must give." meta={`${evaluation.length} cases`} defaultOpen={defaultOpen}>
       {(() => {
         // Build titles and detect collisions for uniqueness
         const rawTitles = evaluation.map((tc) => buildRegressionTitle(tc));
@@ -957,7 +974,7 @@ function ValidationObligations({ pill, defaultOpen }: { pill: PillVersion; defau
         const expectedDecision = (tc.expected_decision as string) ?? "ABSTAIN";
         const expectedActions = (tc.expected_actions as string[]) ?? [];
         const expectedBlocked = (tc.expected_blocked as string[]) ?? [];
-        let title = rawTitles[i] || id;
+        let title = REGRESSION_TITLES[id] ?? (rawTitles[i] || id);
         if ((titleCounts.get(title) ?? 0) > 1) title = `${title} (${id.replace(/_/g, " ")})`;
         const isNew = pill.previous_version && newCaseIds && newCaseIds.size > 0 && id === "flat-but-backflow";
 
@@ -967,7 +984,7 @@ function ValidationObligations({ pill, defaultOpen }: { pill: PillVersion; defau
               <span className="regression-row-title">{title}</span>
               <span className="regression-row-arrow">→</span>
               <span className={decisionBadgeClass(expectedDecision)}>
-                {DECISION_LABELS[expectedDecision] ?? expectedDecision}
+                {expectedDecision === "HUMAN_REVIEW" && expectedActions.includes("monitor_trend") ? "Keep monitoring (person confirms)" : (DECISION_LABELS[expectedDecision] ?? expectedDecision)}
               </span>
               {isNew ? (
                 <span className="regression-row-badge-new">New in v{pill.version}</span>
@@ -993,10 +1010,7 @@ function ValidationObligations({ pill, defaultOpen }: { pill: PillVersion; defau
         );
       });
       })()}
-      <div className="callout callout-info mt-16">
-        Approved regression obligations are inherited by successor versions and cannot be
-        silently removed or weakened.
-      </div>
+      
     </Collapsible>
   );
 }
@@ -1013,7 +1027,7 @@ function VersionLineage({
   defaultOpen: boolean;
 }) {
   return (
-    <Collapsible title="Version Lineage" meta={`${versions.length} version${versions.length !== 1 ? "s" : ""}`} defaultOpen={defaultOpen}>
+    <Collapsible title="Version history" hint="Every version ever made." meta={`${versions.length} version${versions.length !== 1 ? "s" : ""}`} defaultOpen={defaultOpen}>
       {versions.length <= 1 ? (
         <div className="text-muted text-sm">
           Only <strong>v{currentVersion}</strong> exists at this point. No previous or successor versions have been published.
@@ -1031,10 +1045,10 @@ function VersionLineage({
                 <span className="timeline-time">{fmtDate(v.created_at)}</span>
               </div>
               {v.change_reason && (
-                <div className="text-sm text-muted mt-8">{v.change_reason}</div>
+                <div className="text-sm text-muted mt-8">{cleanText(v.change_reason)}</div>
               )}
               <div className="text-sm text-muted mt-8">
-                Previous: {v.previous_version ? `v${v.previous_version}` : "—"} · Hash: {fmtHash(v.content_hash)}
+                Written by {actorLabel(v.author)}{v.previous_version ? ` · replaces v${v.previous_version}` : ""}
               </div>
             </li>
           ))}

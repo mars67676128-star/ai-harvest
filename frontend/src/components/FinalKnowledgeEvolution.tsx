@@ -1,4 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { friendlyError } from "../lib/friendlyError";
+import { WaitingFor, DemoHint, PlainChanges } from "./WorkflowBits";
+import { persona } from "../lib/glossary";
+import { actorLabel, sgTime, cleanText } from "../lib/format";
+// The offline demo AI only recognises these exact labelled corrections; the label is added on submit, not shown.
+const DEMO_PREFIX = "SYNTHETIC CORRECTION: ";
+const withPrefix = (t: string) => (t.startsWith(DEMO_PREFIX) ? t : DEMO_PREFIX + t);
 import type { DiffResult, PillVersion, RecommendationRecord } from "../types";
 import {
   getFeedback,
@@ -29,14 +36,6 @@ const OPS_ID = "asset.monsoon.triage";
 const BASE_CORRECTION = "SYNTHETIC CORRECTION: A flat water trend can hide drain backflow. Require a verified drain_backflow observation. If backflow is present, escalate to the duty facilities engineer and block routine monitoring as the sole response, even when water is not rising.";
 const REVISED_CORRECTION = "SYNTHETIC CORRECTION: A flat water trend can hide drain backflow. Require an explicit verified drain_backflow observation before applying the exception; do not infer backflow from a flat trend alone. If drain_backflow is missing or unverified, abstain and require qualified verification. If verified backflow is present, escalate to the duty facilities engineer and block routine monitoring as the sole response, even when water is not rising.";
 
-function actor(value: string): string {
-  return value.replace(/^demo[-_]/, "").replace(/[_-]+/g, " ").replace(/^./, (c) => c.toUpperCase());
-}
-
-function short(value: string | null): string {
-  return value ? `${value.slice(0, 8)}…` : "—";
-}
-
 function statusClass(status: string): string {
   if (status === "APPROVED") return "badge badge-success";
   if (status === "IN_REVIEW") return "badge badge-warning";
@@ -64,11 +63,12 @@ export function KnowledgeEvolution({
   const [candidate, setCandidate] = useState<PillVersion | null>(null);
   const [diff, setDiff] = useState<DiffResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [drafting, setDrafting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [outcomeText, setOutcomeText] = useState("Duty team assessment identified intermittent drain backflow. Water readings appeared flat but the drain was backflowing.");
-  const [correction, setCorrection] = useState(BASE_CORRECTION);
+  const [outcomeText, setOutcomeText] = useState("Escalation was right. Engineer found the cause: the floor drain was backing up (backflow). Backflow will not always show as rising water. If the pump keeps pace, the level stays steady and looks safe.");
+  const [correction, setCorrection] = useState(cleanText(BASE_CORRECTION));
   const [reviewNote, setReviewNote] = useState("Make the verification requirement explicit and distinguish verified backflow from inference.");
-  const [revisionText, setRevisionText] = useState(REVISED_CORRECTION);
+  const [revisionText, setRevisionText] = useState(cleanText(REVISED_CORRECTION));
 
   const loadData = useCallback(async () => {
     setError(null);
@@ -149,7 +149,7 @@ export function KnowledgeEvolution({
   });
 
   const submitInitialFeedback = () => recId && run(async () => {
-    const response = await submitFeedback(recId, OPS_ID, correction.trim(), nextVersion);
+    const response = await submitFeedback(recId, OPS_ID, withPrefix(correction.trim()), nextVersion);
     const id = String(response.id ?? response.feedback_id ?? "");
     if (!id) throw new Error("Feedback ID missing from backend response");
     addFeedbackId(recId, id);
@@ -157,7 +157,16 @@ export function KnowledgeEvolution({
   });
 
   const generateProposal = () => feedbackId && run(async () => {
-    await proposeCandidate(feedbackId);
+    // Show the drafting state for at least a moment (a live model takes several seconds).
+    setDrafting(true);
+    const started = Date.now();
+    try {
+      await proposeCandidate(feedbackId);
+      const wait = 2800 - (Date.now() - started);
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    } finally {
+      setDrafting(false);
+    }
   });
 
   const submitForReview = () => candidate && run(async () => {
@@ -176,12 +185,12 @@ export function KnowledgeEvolution({
     if (!reviewNote.trim()) throw new Error("A rejection reason is required.");
     await transitionPill(OPS_ID, candidate.version, "reject", reviewNote.trim());
     rememberRejection(OPS_ID, candidate.version, reviewNote.trim(), getRole());
-    setRevisionText(REVISED_CORRECTION);
+    setRevisionText(cleanText(REVISED_CORRECTION));
   });
 
   const submitRevisionFeedback = () => recId && run(async () => {
     if (!revisionText.trim()) throw new Error("Enter a revised correction before resubmitting.");
-    const response = await submitFeedback(recId, OPS_ID, revisionText.trim(), nextVersion);
+    const response = await submitFeedback(recId, OPS_ID, withPrefix(revisionText.trim()), nextVersion);
     const id = String(response.id ?? response.feedback_id ?? "");
     if (!id) throw new Error("Feedback ID missing from backend response");
     addFeedbackId(recId, id);
@@ -206,12 +215,11 @@ export function KnowledgeEvolution({
       <div className="case-header">
         <div className="flex gap-8 flex-wrap" style={{ alignItems: "center" }}>
           <span className="case-title">Knowledge Evolution</span>
-          <span className="synthetic-badge">Synthetic demo flow</span>
         </div>
-        <div className="case-subtitle">Recommendation {short(recId)} · approved knowledge changes only after review, validation and approval</div>
+        <div className="case-subtitle">{rec ? `Case from ${sgTime(rec.created_at)} · ` : ""}changes to approved knowledge go through review, testing and approval</div>
       </div>
 
-      {error && <div className="error-box mb-16">{error}</div>}
+      {error && <div className="error-box mb-16">{friendlyError(error)}</div>}
 
       <div className="source-attribution">
         <span className="source-label">Production release:</span>
@@ -219,24 +227,18 @@ export function KnowledgeEvolution({
         {candidate && <span className={statusClass(candidate.status)}>Candidate v{candidate.version} · {candidate.status}</span>}
       </div>
 
-      <div className="ai-proposal-banner mb-16">
-        <span className="banner-text">AI CAN PROPOSE — IT CANNOT RELEASE KNOWLEDGE.</span>
-        <span className="banner-sub">The approved version remains authoritative until the human governance cycle completes.</span>
-      </div>
 
       {role !== "operator" && role !== "approver" && recId && (
-        <div className="callout callout-info mb-16">
-          Recommendation details are intentionally hidden from this role. This screen keeps only opaque record IDs in browser storage; the governance state below is read from the backend.
-        </div>
+        <div className="text-muted text-sm mb-16">Case details are visible to operators and approvers only.</div>
       )}
 
-      {!recId && (
-        <div className="callout callout-info">No operational recommendation is selected. Start from Live Case as Operator.</div>
+      {!recId && role === "operator" && (
+        <div className="callout callout-info">No case selected yet. Cases start in Live Case.</div>
       )}
 
       {operatorNeedsDecision && (
         <div className="callout callout-warning">
-          <strong>Record the accountable escalation first.</strong> Learning starts only after a human decision.
+          <strong>Record the escalation in Live Case first.</strong>
           {onGoToLiveCase && <button className="btn btn-primary" style={{ marginLeft: 8 }} onClick={onGoToLiveCase}>Open Live Case</button>}
         </div>
       )}
@@ -245,7 +247,6 @@ export function KnowledgeEvolution({
         <div className="card mb-16">
           <div className="card-header"><span className="card-title">1. Record What Actually Happened</span><span className="card-meta">Operator</span></div>
           <div className="card-body">
-            <div className="text-dim mb-8">The outcome is stored separately from the recommendation so later learning remains traceable.</div>
             <textarea className="note-input mb-8" rows={4} value={outcomeText} onChange={(e) => setOutcomeText(e.target.value)} disabled={busy} />
             <button className="btn btn-primary" disabled={busy || !outcomeText.trim()} onClick={recordOperationalOutcome}>{busy ? "Recording…" : "Record Outcome"}</button>
           </div>
@@ -256,7 +257,6 @@ export function KnowledgeEvolution({
         <div className="card mb-16">
           <div className="card-header"><span className="card-title">2. Submit a Correction</span><span className="card-meta">Operator</span></div>
           <div className="card-body">
-            <div className="text-dim mb-8">Feedback does not change the approved Pill. It creates a separate learning record for an Expert to assess.</div>
             <textarea className="note-input mb-8" rows={5} value={correction} onChange={(e) => setCorrection(e.target.value)} disabled={busy} />
             <div className="text-muted mb-8">Proposed version: v{nextVersion}</div>
             <button className="btn btn-primary" disabled={busy || !correction.trim()} onClick={submitInitialFeedback}>Submit Feedback</button>
@@ -266,29 +266,39 @@ export function KnowledgeEvolution({
 
       {waitingForProposal && (
         <div className="card mb-16">
-          <div className="card-header"><span className="card-title">3. Generate AI Candidate</span><span className="card-meta">Expert</span></div>
+          <div className="card-header"><span className="card-title">3. AI proposal</span><span className="card-meta">Expert</span></div>
           <div className="card-body">
-            <div className="callout callout-ai mb-16"><strong>AI proposal — not production knowledge.</strong> Feedback {short(feedbackId)} will create a DRAFT successor.</div>
+            <div className="text-dim mb-16">AI will draft v{nextVersion} from the feedback.</div>
             {latestRejected && <div className="text-dim mb-16">This feedback follows rejected v{latestRejected.version}; the new proposal will be v{nextVersion} and must pass the full governance cycle again.</div>}
-            <button className="btn btn-primary" disabled={busy} onClick={generateProposal}>{busy ? "Generating…" : "Generate AI Proposal"}</button>
+            {drafting ? (
+              <div className="ai-skeleton" aria-label="Drafting proposal">
+                <div className="ai-writing">AI is drafting v{nextVersion} from the feedback…</div>
+                <span /><span /><span />
+              </div>
+            ) : (
+              <button className="btn btn-primary" disabled={busy} onClick={generateProposal}>Generate AI Proposal</button>
+            )}
           </div>
         </div>
       )}
 
       {candidate?.status === "DRAFT" && (
         <div className="card mb-16">
-          <div className="card-header"><span className="card-title">4. Expert Review of Candidate Diff</span><span className="card-meta">v{candidate.previous_version} → v{candidate.version}</span></div>
+          <div className="card-header"><span className="card-title">4. Check the proposed changes</span><span className="card-meta">v{candidate.previous_version} → v{candidate.version}</span></div>
           <div className="card-body">
-            <div className="callout callout-warning mb-16"><strong>v{candidate.previous_version} remains active.</strong> This draft cannot affect runtime.</div>
-            <div className="section-heading">Change reason</div><div className="text-dim mb-16">{candidate.change_reason}</div>
-            <div className="section-heading">Structured changes</div>
-            <div className="mb-16">
-              {diff?.changes.length ? diff.changes.map((change, i) => (
-                <div className="diff-added" key={i}><div className="diff-path">{change.path}</div><div className="text-sm">Before: {JSON.stringify(change.before)}<br />After: {JSON.stringify(change.after)}</div></div>
-              )) : <div className="text-muted">Diff unavailable for this role.</div>}
-            </div>
-            <div className="text-muted mb-8">Regression obligations in candidate: {candidate.content.evaluation.length}</div>
-            {role === "expert" ? <button className="btn btn-primary" disabled={busy} onClick={submitForReview}>Submit for Independent Review</button> : <div className="switch-role-hint">Switch to Expert to submit this candidate.</div>}
+            <div className="callout callout-warning mb-16">v{candidate.previous_version} stays in use until this is approved.</div>
+            <div className="section-heading">Why it changed</div><div className="text-dim mb-16">{candidate.change_reason.replace(/^SYNTHETIC CORRECTION:\s*/, "")}</div>
+            <div className="section-heading">What changes <span className="ai-tag">AI-drafted</span></div>
+            {active ? <PlainChanges before={active.content} after={candidate.content} /> : <div className="text-muted">Current version unavailable.</div>}
+            {diff?.changes.length ? (
+              <details className="raw-diff mb-16">
+                <summary>Technical diff ({diff.changes.length} field changes)</summary>
+                {diff.changes.map((change, i) => (
+                  <div className="diff-added" key={i}><div className="diff-path">{change.path}</div><div className="text-sm">Before: {JSON.stringify(change.before)}<br />After: {JSON.stringify(change.after)}</div></div>
+                ))}
+              </details>
+            ) : null}
+            {role === "expert" ? <button className="btn btn-primary" disabled={busy} onClick={submitForReview}>Submit for Independent Review</button> : <WaitingFor role="expert" task="check and submit this proposal" />}
             {onGoToPill && <div className="mt-8"><span className="pill-link" onClick={() => onGoToPill(OPS_ID)}>Inspect full Pill →</span></div>}
           </div>
         </div>
@@ -296,11 +306,16 @@ export function KnowledgeEvolution({
 
       {candidate?.status === "IN_REVIEW" && (
         <div className="card mb-16">
-          <div className="card-header"><span className="card-title">5. Independent Review & Regression Validation</span><span className="card-meta">Reviewer</span></div>
+          <div className="card-header"><span className="card-title">5. Independent review & test situations</span><span className="card-meta">Reviewer</span></div>
           <div className="card-body">
             <div className="kv mb-16"><div><dt>Review</dt><dd>{candidate.review ? "Recorded" : "Pending"}</dd></div><div><dt>Validation</dt><dd>{candidate.validation ? (candidate.validation.passed === true ? "Passed" : "Failed") : "Pending"}</dd></div></div>
             {role === "reviewer" ? (
               <>
+                {candidate.review && candidate.validation && (
+                  <div className="text-dim mb-8">
+                    Review and test situations are done — this now goes to {persona("approver").name} (Approver) for the release decision. You can still reject it before release.
+                  </div>
+                )}
                 <div className="section-heading">Reviewer note / rejection reason</div>
                 <textarea className="note-input mb-8" rows={3} value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} disabled={busy} />
                 <div className="flex gap-8 flex-wrap">
@@ -310,28 +325,27 @@ export function KnowledgeEvolution({
                 </div>
               </>
             ) : candidate.review && candidate.validation ? (
-              <div className="switch-role-hint">Review and validation are complete. Switch to Approver for the release decision.</div>
-            ) : <div className="switch-role-hint">Switch to Reviewer to continue.</div>}
+              <WaitingFor role="approver" task="make the release decision" />
+            ) : <WaitingFor role="reviewer" task="review it and run the test situations" />}
           </div>
         </div>
       )}
 
       {candidate?.status === "REJECTED" && (
         <div className="card mb-16">
-          <div className="card-header"><span className="card-title">Rejected Candidate — Revise, Do Not Reuse</span><span className="card-meta">v{candidate.version}</span></div>
+          <div className="card-header"><span className="card-title">Rejected — revise and resubmit</span><span className="card-meta">v{candidate.version}</span></div>
           <div className="card-body">
             <div className="callout callout-danger mb-16"><strong>v{candidate.version} was not released.</strong> v{candidate.previous_version} remains active.</div>
             <div className="section-heading">Reviewer&apos;s reason</div>
-            <div className="rejected-reason mb-16">{rejectedReason ? `“${rejectedReason.note}” — ${actor(rejectedReason.actor)}` : "The rejection is recorded in the audit trail."}</div>
+            <div className="rejected-reason mb-16">{rejectedReason ? `“${rejectedReason.note}” — ${actorLabel(rejectedReason.actor)}` : "The rejection is recorded in the audit trail."}</div>
             {role === "expert" ? (
               <>
                 <div className="section-heading">Revised correction</div>
-                <div className="text-dim mb-8">Edit the knowledge so it actually addresses the reviewer&apos;s concern. A rejected candidate is never edited in place.</div>
+                <div className="text-dim mb-8">Edit the correction to address the reviewer&apos;s reason.</div>
                 <textarea className="note-input mb-8" rows={7} value={revisionText} onChange={(e) => setRevisionText(e.target.value)} disabled={busy} />
-                <div className="text-muted mb-8">This creates new feedback for candidate v{nextVersion}; the reviewer must assess it again.</div>
-                <button className="btn btn-primary" disabled={busy || !revisionText.trim() || revisionText.trim() === candidate.change_reason.trim()} onClick={submitRevisionFeedback}>Submit Revised Feedback for v{nextVersion}</button>
+                <button className="btn btn-primary" disabled={busy || !revisionText.trim() || revisionText.trim() === cleanText(candidate.change_reason)} onClick={submitRevisionFeedback}>Submit Revised Feedback for v{nextVersion}</button>
               </>
-            ) : <div className="switch-role-hint">Switch to Expert to respond to the rejection with an edited correction.</div>}
+            ) : <WaitingFor role="expert" task="revise and resubmit" />}
           </div>
         </div>
       )}
@@ -340,7 +354,7 @@ export function KnowledgeEvolution({
         <div className="card mb-16">
           <div className="card-header"><span className="card-title">6. Release Decision</span><span className="card-meta">Approver</span></div>
           <div className="card-body">
-            <div className="callout callout-warning mb-16">Approving v{candidate.version} supersedes v{candidate.previous_version}. The backend rechecks exact review, validation and inherited regressions at release time.</div>
+            <div className="callout callout-warning mb-16">Approving v{candidate.version} supersedes v{candidate.previous_version}.</div>
             <button className="btn btn-primary" disabled={busy || candidate.validation.passed !== true} onClick={approve}>{busy ? "Approving…" : `Approve v${candidate.version}`}</button>
           </div>
         </div>
@@ -356,17 +370,17 @@ export function KnowledgeEvolution({
               {onGoToLiveCase && <button className="btn btn-primary" onClick={onGoToLiveCase}>Open Live Case</button>}
               {onGoToPill && <button className="btn" onClick={() => onGoToPill(OPS_ID)}>Inspect Version Lineage</button>}
             </div>
-            {role !== "operator" && <div className="callout callout-info mt-16">Switch to <strong>Operator</strong> before running a new assessment. Approver can inspect but cannot create operational cases.</div>}
+            {role !== "operator" && <div className="mt-16"><DemoHint>New assessments are run by the operator — switch to Operator at top right.</DemoHint></div>}
           </div>
         </div>
       )}
 
       {role === "operator" && rec && rec.outcome && feedbackId && !candidate && (
-        <div className="switch-role-hint">Feedback recorded. Switch to Expert to generate the candidate proposal.</div>
+        <WaitingFor role="expert" task="generate the AI proposal" />
       )}
 
       {role === "expert" && !feedbackId && !candidate && recId && (
-        <div className="callout callout-info">No feedback record is available for this recommendation yet. Switch to Operator and submit feedback first; the UI will not silently create duplicate feedback.</div>
+        <WaitingFor role="operator" task="report what happened and what was missed" />
       )}
     </div>
   );

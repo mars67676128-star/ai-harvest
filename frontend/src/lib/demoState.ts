@@ -46,6 +46,10 @@ export function addFeedbackId(recId: string, id: string) {
   lsSet(fbKey(recId), JSON.stringify(ids));
 }
 export function setFeedbackIds(recId: string, ids: string[]) {
+  // Never erase the last opaque pointer merely because the current role cannot read
+  // /feedback/{id}. Viewer is intentionally forbidden from that endpoint; a role switch
+  // must not destroy pending learning state. Call forgetRec() when a record is truly reset.
+  if (ids.length === 0) return;
   lsSet(fbKey(recId), JSON.stringify(ids));
 }
 

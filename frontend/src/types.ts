@@ -195,6 +195,38 @@ export interface Dashboard {
   purpose: string;
 }
 
+export interface Feedback {
+  id: string;
+  kind: "feedback";
+  parent_id: string;
+  created_at: string;
+  pill_id: string;
+  correction: string;
+  proposed_version: string;
+  previous_version: string;
+  actor: string;
+  synthetic: boolean;
+}
+
+export interface DiffChange {
+  path: string;
+  before: unknown;
+  after: unknown;
+}
+
+export interface DiffResult {
+  pill_id: string;
+  from_version: string;
+  to_version: string;
+  from_hash: string;
+  to_hash: string;
+  change_reason: string;
+  changes: DiffChange[];
+  affected_tests: string[];
+  test_impact_note: string;
+  supporting_evidence: string[];
+}
+
 export interface ErrorEnvelope {
   error: {
     code: string;

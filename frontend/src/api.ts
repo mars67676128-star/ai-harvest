@@ -3,6 +3,8 @@ import type {
   Dashboard,
   PillVersion,
   RecommendationRecord,
+  Feedback,
+  DiffResult,
 } from "./types";
 
 const API_BASE = "/api/v1";
@@ -150,5 +152,65 @@ export async function recordDecision(
     `/recommendations/${recommendationId}/decision`,
     "POST",
     { decision, note }
+  );
+}
+
+export async function recordOutcome(
+  recommendationId: string,
+  summary: string,
+  resolved: boolean,
+  synthetic: boolean
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(
+    `/recommendations/${recommendationId}/outcome`,
+    "POST",
+    { summary, resolved, synthetic }
+  );
+}
+
+export async function submitFeedback(
+  recommendationId: string,
+  pillId: string,
+  correction: string,
+  proposedVersion: string
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(
+    `/recommendations/${recommendationId}/feedback`,
+    "POST",
+    { pill_id: pillId, correction, proposed_version: proposedVersion }
+  );
+}
+
+export async function getFeedback(feedbackId: string): Promise<Feedback> {
+  return request<Feedback>(`/feedback/${feedbackId}`);
+}
+
+export async function proposeCandidate(
+  feedbackId: string
+): Promise<PillVersion> {
+  return request<PillVersion>(`/feedback/${feedbackId}/propose`, "POST");
+}
+
+export async function getPillDiff(
+  pillId: string,
+  fromVersion: string,
+  toVersion: string
+): Promise<DiffResult> {
+  const params = new URLSearchParams();
+  params.set("from_version", fromVersion);
+  params.set("to_version", toVersion);
+  return request<DiffResult>(`/pills/${pillId}/diff?${params.toString()}`);
+}
+
+export async function transitionPill(
+  pillId: string,
+  version: string,
+  operation: "submit" | "review" | "validate" | "approve" | "reject" | "deprecate",
+  note = ""
+): Promise<PillVersion> {
+  return request<PillVersion>(
+    `/pills/${pillId}/versions/${version}/${operation}`,
+    "POST",
+    { note }
   );
 }

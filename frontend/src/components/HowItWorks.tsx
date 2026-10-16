@@ -109,7 +109,6 @@ export function HowItWorks({ onStart }: { onStart: () => void }) {
         </div>
         <button className="btn btn-primary" onClick={onStart}>Open Live Case →</button>
       </div>
-      <p className="text-muted text-sm mt-16">All people, buildings, readings and outcomes in this demo are synthetic.</p>
     </div>
   );
 }

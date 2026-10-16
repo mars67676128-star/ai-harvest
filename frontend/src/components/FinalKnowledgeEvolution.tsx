@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { friendlyError } from "../lib/friendlyError";
 import { WaitingFor, DemoHint, PlainChanges } from "./WorkflowBits";
 import { persona } from "../lib/glossary";
+import { actorLabel, sgTime, cleanText } from "../lib/format";
+// The offline demo AI only recognises these exact labelled corrections; the label is added on submit, not shown.
+const DEMO_PREFIX = "SYNTHETIC CORRECTION: ";
+const withPrefix = (t: string) => (t.startsWith(DEMO_PREFIX) ? t : DEMO_PREFIX + t);
 import type { DiffResult, PillVersion, RecommendationRecord } from "../types";
 import {
   getFeedback,
@@ -32,14 +36,6 @@ const OPS_ID = "asset.monsoon.triage";
 const BASE_CORRECTION = "SYNTHETIC CORRECTION: A flat water trend can hide drain backflow. Require a verified drain_backflow observation. If backflow is present, escalate to the duty facilities engineer and block routine monitoring as the sole response, even when water is not rising.";
 const REVISED_CORRECTION = "SYNTHETIC CORRECTION: A flat water trend can hide drain backflow. Require an explicit verified drain_backflow observation before applying the exception; do not infer backflow from a flat trend alone. If drain_backflow is missing or unverified, abstain and require qualified verification. If verified backflow is present, escalate to the duty facilities engineer and block routine monitoring as the sole response, even when water is not rising.";
 
-function actor(value: string): string {
-  return value.replace(/^demo[-_]/, "").replace(/[_-]+/g, " ").replace(/^./, (c) => c.toUpperCase());
-}
-
-function short(value: string | null): string {
-  return value ? `${value.slice(0, 8)}…` : "—";
-}
-
 function statusClass(status: string): string {
   if (status === "APPROVED") return "badge badge-success";
   if (status === "IN_REVIEW") return "badge badge-warning";
@@ -67,11 +63,12 @@ export function KnowledgeEvolution({
   const [candidate, setCandidate] = useState<PillVersion | null>(null);
   const [diff, setDiff] = useState<DiffResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [drafting, setDrafting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [outcomeText, setOutcomeText] = useState("Duty team assessment identified intermittent drain backflow. Water readings appeared flat but the drain was backflowing.");
-  const [correction, setCorrection] = useState(BASE_CORRECTION);
+  const [outcomeText, setOutcomeText] = useState("Escalation was right. Engineer found the cause: the floor drain was backing up (backflow). Backflow will not always show as rising water. If the pump keeps pace, the level stays steady and looks safe.");
+  const [correction, setCorrection] = useState(cleanText(BASE_CORRECTION));
   const [reviewNote, setReviewNote] = useState("Make the verification requirement explicit and distinguish verified backflow from inference.");
-  const [revisionText, setRevisionText] = useState(REVISED_CORRECTION);
+  const [revisionText, setRevisionText] = useState(cleanText(REVISED_CORRECTION));
 
   const loadData = useCallback(async () => {
     setError(null);
@@ -152,7 +149,7 @@ export function KnowledgeEvolution({
   });
 
   const submitInitialFeedback = () => recId && run(async () => {
-    const response = await submitFeedback(recId, OPS_ID, correction.trim(), nextVersion);
+    const response = await submitFeedback(recId, OPS_ID, withPrefix(correction.trim()), nextVersion);
     const id = String(response.id ?? response.feedback_id ?? "");
     if (!id) throw new Error("Feedback ID missing from backend response");
     addFeedbackId(recId, id);
@@ -160,7 +157,16 @@ export function KnowledgeEvolution({
   });
 
   const generateProposal = () => feedbackId && run(async () => {
-    await proposeCandidate(feedbackId);
+    // Show the drafting state for at least a moment (a live model takes several seconds).
+    setDrafting(true);
+    const started = Date.now();
+    try {
+      await proposeCandidate(feedbackId);
+      const wait = 2800 - (Date.now() - started);
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    } finally {
+      setDrafting(false);
+    }
   });
 
   const submitForReview = () => candidate && run(async () => {
@@ -179,12 +185,12 @@ export function KnowledgeEvolution({
     if (!reviewNote.trim()) throw new Error("A rejection reason is required.");
     await transitionPill(OPS_ID, candidate.version, "reject", reviewNote.trim());
     rememberRejection(OPS_ID, candidate.version, reviewNote.trim(), getRole());
-    setRevisionText(REVISED_CORRECTION);
+    setRevisionText(cleanText(REVISED_CORRECTION));
   });
 
   const submitRevisionFeedback = () => recId && run(async () => {
     if (!revisionText.trim()) throw new Error("Enter a revised correction before resubmitting.");
-    const response = await submitFeedback(recId, OPS_ID, revisionText.trim(), nextVersion);
+    const response = await submitFeedback(recId, OPS_ID, withPrefix(revisionText.trim()), nextVersion);
     const id = String(response.id ?? response.feedback_id ?? "");
     if (!id) throw new Error("Feedback ID missing from backend response");
     addFeedbackId(recId, id);
@@ -209,9 +215,8 @@ export function KnowledgeEvolution({
       <div className="case-header">
         <div className="flex gap-8 flex-wrap" style={{ alignItems: "center" }}>
           <span className="case-title">Knowledge Evolution</span>
-          <span className="synthetic-badge">Synthetic demo flow</span>
         </div>
-        <div className="case-subtitle">Case {short(recId)} · changes to approved knowledge go through review, testing and approval</div>
+        <div className="case-subtitle">{rec ? `Case from ${sgTime(rec.created_at)} · ` : ""}changes to approved knowledge go through review, testing and approval</div>
       </div>
 
       {error && <div className="error-box mb-16">{friendlyError(error)}</div>}
@@ -227,7 +232,7 @@ export function KnowledgeEvolution({
         <div className="text-muted text-sm mb-16">Case details are visible to operators and approvers only.</div>
       )}
 
-      {!recId && (
+      {!recId && role === "operator" && (
         <div className="callout callout-info">No case selected yet. Cases start in Live Case.</div>
       )}
 
@@ -265,7 +270,14 @@ export function KnowledgeEvolution({
           <div className="card-body">
             <div className="text-dim mb-16">AI will draft v{nextVersion} from the feedback.</div>
             {latestRejected && <div className="text-dim mb-16">This feedback follows rejected v{latestRejected.version}; the new proposal will be v{nextVersion} and must pass the full governance cycle again.</div>}
-            <button className="btn btn-primary" disabled={busy} onClick={generateProposal}>{busy ? "Generating…" : "Generate AI Proposal"}</button>
+            {drafting ? (
+              <div className="ai-skeleton" aria-label="Drafting proposal">
+                <div className="ai-writing">AI is drafting v{nextVersion} from the feedback…</div>
+                <span /><span /><span />
+              </div>
+            ) : (
+              <button className="btn btn-primary" disabled={busy} onClick={generateProposal}>Generate AI Proposal</button>
+            )}
           </div>
         </div>
       )}
@@ -325,13 +337,13 @@ export function KnowledgeEvolution({
           <div className="card-body">
             <div className="callout callout-danger mb-16"><strong>v{candidate.version} was not released.</strong> v{candidate.previous_version} remains active.</div>
             <div className="section-heading">Reviewer&apos;s reason</div>
-            <div className="rejected-reason mb-16">{rejectedReason ? `“${rejectedReason.note}” — ${actor(rejectedReason.actor)}` : "The rejection is recorded in the audit trail."}</div>
+            <div className="rejected-reason mb-16">{rejectedReason ? `“${rejectedReason.note}” — ${actorLabel(rejectedReason.actor)}` : "The rejection is recorded in the audit trail."}</div>
             {role === "expert" ? (
               <>
                 <div className="section-heading">Revised correction</div>
                 <div className="text-dim mb-8">Edit the correction to address the reviewer&apos;s reason.</div>
                 <textarea className="note-input mb-8" rows={7} value={revisionText} onChange={(e) => setRevisionText(e.target.value)} disabled={busy} />
-                <button className="btn btn-primary" disabled={busy || !revisionText.trim() || revisionText.trim() === candidate.change_reason.trim()} onClick={submitRevisionFeedback}>Submit Revised Feedback for v{nextVersion}</button>
+                <button className="btn btn-primary" disabled={busy || !revisionText.trim() || revisionText.trim() === cleanText(candidate.change_reason)} onClick={submitRevisionFeedback}>Submit Revised Feedback for v{nextVersion}</button>
               </>
             ) : <WaitingFor role="expert" task="revise and resubmit" />}
           </div>

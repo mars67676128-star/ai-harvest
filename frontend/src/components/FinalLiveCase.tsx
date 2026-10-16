@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { friendlyError } from "../lib/friendlyError";
 import { DemoHint } from "./WorkflowBits";
+import { actorLabel, sgTime, readingLabel, readingValue, conditionsText, cleanText } from "../lib/format";
 import type { Observation, PillVersion, RecommendationRecord } from "../types";
 import {
   createCase,
@@ -27,15 +28,6 @@ const ACTION_LABELS: Record<string, string> = {
   tenant_liaison: "Maintain tenant liaison",
 };
 
-const OBS_LABELS: Record<string, string> = {
-  water_rise_mm_min: "Water Rise Rate",
-  pump_running: "Pump Running",
-  critical_equipment_exposed: "Critical Equipment Exposed",
-  alternative_route_verified: "Alternative Route Verified",
-  tenant_arrivals_expected: "Tenant Arrivals Expected",
-  drain_backflow: "Drain Backflow",
-};
-
 function humanise(value: string): string {
   return value.replace(/^demo[-_]/, "").replace(/[_-]+/g, " ").replace(/^./, (c) => c.toUpperCase());
 }
@@ -44,11 +36,20 @@ function actionLabel(id: string): string {
   return ACTION_LABELS[id] ?? humanise(id);
 }
 
-function observation(value: boolean | number, observedAt: string, unit = ""): Observation {
+const READING_SOURCE: Record<string, string> = {
+  water_rise_mm_min: "Basement level sensor",
+  pump_running: "Pump controller (BMS)",
+  critical_equipment_exposed: "Duty technician check",
+  alternative_route_verified: "Security patrol",
+  tenant_arrivals_expected: "Visitor management system",
+  drain_backflow: "Duty technician check",
+};
+
+function observation(value: boolean | number, observedAt: string, unit = "", key = ""): Observation {
   return {
     value,
     unit,
-    source: "Synthetic verified demo observation",
+    source: READING_SOURCE[key] ?? "Duty team",
     observed_at: observedAt,
     quality: "verified",
   };
@@ -58,13 +59,13 @@ function buildObservations(scenario: Scenario, supportsBackflow: boolean): Recor
   const now = new Date().toISOString();
   const backflow = scenario === "backflow";
   const result: Record<string, Observation> = {
-    water_rise_mm_min: observation(backflow ? 0 : 3, now, "mm/min"),
-    pump_running: observation(true, now),
-    critical_equipment_exposed: observation(false, now),
-    alternative_route_verified: observation(backflow, now),
-    tenant_arrivals_expected: observation(!backflow, now),
+    water_rise_mm_min: observation(backflow ? 0 : 3, now, "mm/min", "water_rise_mm_min"),
+    pump_running: observation(true, now, "", "pump_running"),
+    critical_equipment_exposed: observation(false, now, "", "critical_equipment_exposed"),
+    alternative_route_verified: observation(backflow, now, "", "alternative_route_verified"),
+    tenant_arrivals_expected: observation(!backflow, now, "", "tenant_arrivals_expected"),
   };
-  if (supportsBackflow) result.drain_backflow = observation(backflow, now);
+  if (supportsBackflow) result.drain_backflow = observation(backflow, now, "", "drain_backflow");
   return result;
 }
 
@@ -89,26 +90,23 @@ export function LiveCase({
   const [selectedRec, setSelectedRec] = useState<RecommendationRecord | null>(null);
   const [exactPills, setExactPills] = useState<Record<string, PillVersion>>({});
   const [scenario, setScenario] = useState<Scenario>("rising");
-  const [summaryPending, setSummaryPending] = useState<string | null>(null);
-  const summaryRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!summaryPending) return;
-    const el = summaryRef.current;
-    let timer: number | undefined;
-    const finish = () => { timer = window.setTimeout(() => setSummaryPending(null), 2500); };
-    if (!el || typeof IntersectionObserver === "undefined") { finish(); return () => window.clearTimeout(timer); }
-    const io = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) { io.disconnect(); finish(); }
-    }, { threshold: 0.6 });
-    io.observe(el);
-    return () => { io.disconnect(); window.clearTimeout(timer); };
-  }, [summaryPending, selectedRec]);
+  // AI summary is written on request (button), like "Summarise" in Gmail/Notion.
+  const [summaryWriting, setSummaryWriting] = useState<string | null>(null);
+  const [summaryShown, setSummaryShown] = useState<string[]>([]);
+  const summaryTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(summaryTimer.current), []);
+  const writeSummary = (id: string) => {
+    setSummaryWriting(id);
+    window.clearTimeout(summaryTimer.current);
+    summaryTimer.current = window.setTimeout(() => {
+      setSummaryShown((prev) => (prev.includes(id) ? prev : [...prev, id]));
+      setSummaryWriting(null);
+    }, 2200);
+  };
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [note, setNote] = useState(
-    "Escalated to Duty Facilities Engineer and Tenant Duty Manager for coordinated response."
-  );
+  const [note, setNote] = useState("");
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -122,7 +120,7 @@ export function LiveCase({
         setRecommendations(hydrated);
         setSelectedRec((current) => {
           if (current) return hydrated.find((r) => r.id === current.id) ?? current;
-          return hydrated[hydrated.length - 1] ?? null;
+          return null; // Live Case opens empty; past cases are in the dropdown
         });
       } else {
         setRecommendations([]);
@@ -182,8 +180,6 @@ export function LiveCase({
       setActiveRec(rec.id);
       setRecommendations((prev) => [...prev, rec]);
       setSelectedRec(rec);
-      // The summary is written when the operator scrolls to it (see effect below).
-      setSummaryPending(rec.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -242,14 +238,14 @@ export function LiveCase({
           <div>
             <div className="flex gap-8 flex-wrap" style={{ alignItems: "center" }}>
               <span className="case-title">Harbour Exchange — Basement Sump, Wet Weather</span>
-              <span className="synthetic-badge">Synthetic demo data</span>
             </div>
             <div className="case-subtitle">Office asset · basement sump · heavy-rain scenario</div>
           </div>
           {recommendations.length > 0 && (
             <select className="rec-select" value={selectedRec?.id ?? ""} onChange={(e) => void handleSelect(e.target.value)}>
+              <option value="" disabled>Past cases ({recommendations.length})</option>
               {recommendations.map((r) => (
-                <option key={r.id} value={r.id}>{r.result.decision} · {r.created_at.slice(11, 19)}</option>
+                <option key={r.id} value={r.id}>{r.result.decision === "HUMAN_REVIEW" ? "Needs review" : humanise(r.result.decision)} · {sgTime(r.created_at)}</option>
               ))}
             </select>
           )}
@@ -257,18 +253,18 @@ export function LiveCase({
       </div>
 
       <div className="scenario-context">
-        <b>The situation.</b> Harbour Exchange is fictional. During heavy rain, the basement sump should drain water away.
+        <b>The situation.</b> During heavy rain, the basement sump should drain water away.
       </div>
 
       <div className="card mb-16">
         <div className="card-body">
           <div className="flex-between flex-wrap gap-16">
             <div>
-              <div className="section-heading">Assessment scenario</div>
+              <div className="section-heading">Load example readings</div>
               <select className="role-select" value={scenario} onChange={(e) => setScenario(e.target.value as Scenario)} disabled={role !== "operator" || busy}>
                 <option value="rising">Original: pump running + water rising</option>
                 <option value="backflow" disabled={!supportsBackflow}>
-                  Learned: flat water + drain backflow{!supportsBackflow ? " (available after v1.1 approval)" : ""}
+                  Learned: flat water + drain backflow
                 </option>
               </select>
             </div>
@@ -287,9 +283,9 @@ export function LiveCase({
       <div className="tile-grid" style={{ marginBottom: 20 }}>
         {Object.entries(shownObs).filter(([key]) => ["pump_running", "water_rise_mm_min", "alternative_route_verified", "critical_equipment_exposed", "drain_backflow"].includes(key)).map(([key, value]) => (
           <div className="tile" key={key}>
-            <div className="tile-label">{OBS_LABELS[key] ?? humanise(key)}</div>
-            <div className="tile-value">{String(value.value)}{value.unit ? ` ${value.unit}` : ""}</div>
-            <div className="tile-sub">{value.quality} · {value.source}</div>
+            <div className="tile-label">{readingLabel(key)}</div>
+            <div className="tile-value">{readingValue(key, value.value, value.unit)}</div>
+            <div className="tile-sub">{[value.quality === "verified" ? "Verified" : value.quality, cleanText(value.source) === "Verified reading" ? "" : cleanText(value.source), sgTime(value.observed_at)].filter(Boolean).join(" · ")}</div>
           </div>
         ))}
       </div>
@@ -298,7 +294,7 @@ export function LiveCase({
 
       {!selectedRec && (
         <div className="callout callout-info">
-          No recommendation is selected yet. {role === "operator" ? "Run the assessment to create one." : "Assessments are run by the operator on duty."}
+          No case open. {role === "operator" ? "Run the assessment above to start one, or open a past case from the dropdown." : "Open a past case from the dropdown. Assessments are run by the operator on duty."}
         </div>
       )}
 
@@ -319,9 +315,12 @@ export function LiveCase({
           <div className={selectedRec.result.decision === "ESCALATE" ? "callout callout-warning mb-16" : "callout callout-info mb-16"}>
             <strong>{selectedRec.result.decision === "HUMAN_REVIEW" ? "Needs review" : humanise(selectedRec.result.decision)}</strong>
             {" · "}Advice only
-            <br />{selectedRec.result.human_responsibility}
+            <br />{cleanText(selectedRec.result.human_responsibility)}
           </div>
 
+          {conflict && (
+            <div className="conflict-label">Conflict · 2 pills disagree</div>
+          )}
           {conflict && (
             <div className="conflict-card">
               <div className="conflict-side conflict-side-proposes">
@@ -329,7 +328,7 @@ export function LiveCase({
                 <div className="conflict-action">Review access plan</div>
                 <div className="conflict-reason">Operational continuity suggests reviewing an access plan.</div>
               </div>
-              <div className="conflict-divider">→</div>
+              <div className="conflict-divider">vs</div>
               <div className="conflict-side conflict-side-blocks">
                 <div className="conflict-domain">Tenant Experience blocks</div>
                 <div className="conflict-action">Alternative route unverified</div>
@@ -364,12 +363,16 @@ export function LiveCase({
               {selectedRec.capabilities.map((cap) => (
                 <div key={cap.pill_id} className="mb-16">
                   <div className="pill-prov-name">{exactPills[cap.pill_id]?.content.name ?? cap.pill_id} · v{cap.version}</div>
-                  {cap.trace.length === 0 ? <div className="text-muted">No rule fired.</div> : cap.trace.map((trace) => (
-                    <div className={`rule-card ${trace.category}`} key={trace.rule_id}>
-                      <div className="rule-card-name">{humanise(trace.rule_id)}</div>
-                      <div className="rule-card-rationale">{trace.rationale}</div>
-                    </div>
-                  ))}
+                  {cap.trace.length === 0 ? <div className="text-muted">No rule fired.</div> : cap.trace.map((trace) => {
+                    const rule = exactPills[cap.pill_id]?.content.rules.find((r) => r.id === trace.rule_id);
+                    return (
+                      <div className={`rule-card ${trace.category}`} key={trace.rule_id}>
+                        <div className="rule-card-name">{rule ? `If ${conditionsText(rule.when).toLowerCase()}` : humanise(trace.rule_id)}</div>
+                        <div className="rule-card-rationale">{trace.rationale}</div>
+                        <div className="rule-card-evidence">Readings: {Object.entries(trace.observations).map(([k, o]) => `${readingLabel(k)}: ${readingValue(k, o.value, o.unit)}`).join(" · ")}</div>
+                      </div>
+                    );
+                  })}
                 </div>
               ))}
             </div>
@@ -382,23 +385,29 @@ export function LiveCase({
                 const pill = exactPills[cap.pill_id];
                 return (
                   <div className="pill-provenance mb-16" key={cap.pill_id}>
-                    <div className="pill-prov-header"><div><div className="pill-prov-name">{pill?.content.name ?? cap.pill_id}</div><div className="tech-meta">{cap.pill_id}</div></div><span className="badge badge-success">v{cap.version}</span></div>
-                    <div className="kv">
-                      <div><dt>Content hash used</dt><dd>{cap.content_hash}</dd></div>
-                      {pill && <><div><dt>Owner</dt><dd>{pill.owner}</dd></div><div><dt>Reviewers</dt><dd>{pill.reviewers.join(", ")}</dd></div><div><dt>Author</dt><dd>{pill.author}</dd></div><div><dt>Change reason</dt><dd>{pill.change_reason}</dd></div></>}
-                    </div>
+                    <div className="pill-prov-header"><div><div className="pill-prov-name">{pill?.content.name ?? "Pill"}</div></div><span className="badge badge-success">v{cap.version}</span></div>
+                    {pill && <div className="kv"><div><dt>Owner</dt><dd>{actorLabel(pill.owner)}</dd></div><div><dt>Reviewed by</dt><dd>{pill.reviewers.map(actorLabel).join(", ")}</dd></div><div><dt>Written by</dt><dd>{actorLabel(pill.author)}</dd></div><div><dt>Change reason</dt><dd>{cleanText(pill.change_reason)}</dd></div></div>}
+                    {role !== "operator" && (
+                      <details className="tech-details"><summary>Technical details</summary>
+                        <div className="kv kv-tech"><div><dt>Pill ID</dt><dd>{cap.pill_id}</dd></div><div><dt>Content hash</dt><dd>{cap.content_hash}</dd></div></div>
+                      </details>
+                    )}
                   </div>
                 );
               })}
             </div>
           </div>
 
-          <div className="card mb-16">
-            <div className="card-header"><span className="card-title">Boundaries</span></div>
-            <div className="card-body">
-              {selectedRec.capabilities.map((cap) => <div key={cap.pill_id} className="mb-16"><div className="pill-prov-name mb-8">{exactPills[cap.pill_id]?.content.name ?? cap.pill_id}</div><ul className="boundary-list">{cap.boundaries.map((b) => <li key={b}><span className="boundary-icon">×</span><span>{b}</span></li>)}</ul></div>)}
-            </div>
-          </div>
+          {(() => {
+            const all = [...new Set(selectedRec.capabilities.flatMap((cap) => cap.boundaries))];
+            const never = all.filter((b) => /^automatic/i.test(b));
+            return (
+              <details className="boundary-summary mb-16">
+                <summary><b>Advisory only</b> · {never.length} automatic actions never allowed · view limits</summary>
+                <ul className="boundary-list">{all.map((b) => <li key={b}><span className="boundary-icon">×</span><span>{b}</span></li>)}</ul>
+              </details>
+            );
+          })()}
 
           <div className="card mb-16">
             <div className="card-header"><span className="card-title">Your decision</span></div>
@@ -406,12 +415,17 @@ export function LiveCase({
               {selectedRec.human_decision ? (
                 <>
                   <div className="confirmation-banner"><span className="confirmation-text">Escalation recorded.</span>{onGoToEvolution && <span className="next-step-link" onClick={() => onGoToEvolution(selectedRec.id)}>Next: record the outcome →</span>}</div>
-                  <div className="kv"><div><dt>Decision</dt><dd>{humanise(selectedRec.human_decision.decision)}</dd></div><div><dt>Accountable actor</dt><dd>{humanise(selectedRec.human_decision.actor)}</dd></div><div><dt>Note</dt><dd>{selectedRec.human_decision.note}</dd></div></div>
+                  <div className="kv"><div><dt>Decision</dt><dd>{humanise(selectedRec.human_decision.decision)}</dd></div><div><dt>Recorded by</dt><dd>{actorLabel(selectedRec.human_decision.actor)}</dd></div><div><dt>Note</dt><dd>{selectedRec.human_decision.note}</dd></div></div>
                 </>
               ) : selectedRec.result.decision === "ESCALATE" ? (
                 <>
                   {role !== "operator" && <div className="callout callout-warning mb-16">Only the operator on duty records the decision.</div>}
-                  <textarea className="note-input mb-8" rows={3} value={note} onChange={(e) => setNote(e.target.value)} disabled={busy || role !== "operator"} />
+                  <div className="chip-row mb-8">
+                    {["Escalated to the duty facilities engineer.", "Escalated to the tenant duty manager.", "Escalated to both for a coordinated response."].map((t) => (
+                      <button key={t} type="button" className="kb-chip" onClick={() => setNote(t)} disabled={busy || role !== "operator"}>{t.replace(/\.$/, "")}</button>
+                    ))}
+                  </div>
+                  <textarea className="note-input mb-8" rows={3} value={note} placeholder="Who did you escalate to, and why?" onChange={(e) => setNote(e.target.value)} disabled={busy || role !== "operator"} />
                   <button className="btn btn-primary" onClick={handleEscalation} disabled={busy || role !== "operator" || !note.trim()}>{busy ? "Recording…" : "Record Escalation"}</button>
                 </>
               ) : <div className="text-muted">No escalation decision is required for this recommendation.</div>}
@@ -419,21 +433,23 @@ export function LiveCase({
           </div>
 
           {selectedRec.ai_explanation && (
-            <div className="ai-summary" ref={summaryRef}>
+            <div className="ai-summary">
               <div className="ai-summary-head">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.8 5.4L19 9l-5.2 1.6L12 16l-1.8-5.4L5 9l5.2-1.6z" /><path d="M19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9z" /></svg>
                 <span>Summary</span><span className="ai-tag">AI-generated</span>
               </div>
-              {summaryPending === selectedRec.id ? (
+              {summaryWriting === selectedRec.id ? (
                 <div className="ai-skeleton" aria-label="Writing summary">
                   <div className="ai-writing">Writing summary…</div>
                   <span /><span /><span />
                 </div>
-              ) : (
+              ) : summaryShown.includes(selectedRec.id) ? (
                 <>
                   <p className="ai-summary-text">{selectedRec.ai_explanation.summary}</p>
-                  <p className="ai-summary-unc">{selectedRec.ai_explanation.uncertainty}</p>
+                  <p className="ai-summary-unc">{cleanText(selectedRec.ai_explanation.uncertainty)}</p>
                 </>
+              ) : (
+                <button type="button" className="btn btn-quiet" onClick={() => writeSummary(selectedRec.id)}>Summarise this case</button>
               )}
               <div className="ai-summary-foot">Advisory only · AI summaries can be wrong</div>
             </div>

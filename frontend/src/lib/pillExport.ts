@@ -107,7 +107,7 @@ export function printPillSheet(p: PillVersion) {
   .foot { margin-top: 14px; font-size: 9px; color:#6b7775; word-break: break-all; }
   h2, tr, .gate, .quote { break-inside: avoid; }
 </style></head><body>
-<div class="brand"><span>Sifu · Intelligence Pill</span><span>Synthetic demo data</span></div>
+<div class="brand"><span>Sifu · Intelligence Pill</span><span>Demo environment · fictional data</span></div>
 <h1>${esc(c.name)}</h1>
 <div class="muted">${esc(c.description)}</div>
 <div class="meta">

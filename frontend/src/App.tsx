@@ -40,6 +40,7 @@ export default function App() {
   const [evolutionRecId, setEvolutionRecId] = useState<string | null>(null);
   const [pillsSelectedId, setPillsSelectedId] = useState<string | null>(null);
   const [exactPillVersion, setExactPillVersion] = useState<string | null>(null);
+  const [showBanner, setShowBanner] = useState<boolean>(() => { try { return localStorage.getItem("sifu-banner-dismissed") !== "1"; } catch { return true; } });
 
   useEffect(() => {
     getHealth().then(setHealth).catch(() => {});
@@ -47,6 +48,8 @@ export default function App() {
 
   useEffect(() => {
     getPills().then(setPills).catch(() => {});
+    // Only roles allowed to read recommendations ask for them (no 403s for other roles).
+    if (role !== "operator" && role !== "approver") { setRecommendations([]); return; }
     getRecommendations()
       .then((all) => Promise.all(all.map((r) => getRecommendation(r.id).catch(() => r))))
       .then(setRecommendations)
@@ -105,7 +108,7 @@ export default function App() {
         <div className="topbar-brand">Sifu<span className="brand-sub">AI HARVEST</span></div>
         <div className="topbar-spacer" />
         <div className="topbar-right">
-          {health && <span className="topbar-env"><span className="topbar-env-dot" />{health.environment} · {health.provider}{health.synthetic_demo ? " · synthetic" : ""}</span>}
+          {health && <span className="topbar-env"><span className="topbar-env-dot" />{health.environment === "demo" ? "Demo" : health.environment} · {health.provider === "mock" ? "offline AI" : health.provider}</span>}
           <select className="role-select" value={role} onChange={(e) => handleRoleChange(e.target.value)}>
             <option value="viewer">Viewer · Guest</option>
             <option value="operator">Operator · {PERSONAS.operator.name}</option>
@@ -116,28 +119,34 @@ export default function App() {
         </div>
       </header>
 
+      {showBanner && (
+        <div className="demo-banner">
+          <span>Demo environment — all sites, people and readings are fictional.</span>
+          <button onClick={() => { setShowBanner(false); try { localStorage.setItem("sifu-banner-dismissed", "1"); } catch { /* ignore */ } }} aria-label="Dismiss">×</button>
+        </div>
+      )}
       <div className="app-body">
         <nav className="app-sidebar">
           <div className="sidebar-group">
             <div className="sidebar-group-label">Overview</div>
-            <button className={`sidebar-item ${view === "home" ? "active" : ""}`} onClick={() => setView("home")}><HomeIcon />Home</button>
-            <button className={`sidebar-item ${view === "how" ? "active" : ""}`} onClick={() => setView("how")}><HowIcon />Guide</button>
+            <button className={`sidebar-item ${view === "home" ? "active" : ""}`} title="Home" aria-label="Home" onClick={() => setView("home")}><HomeIcon />Home</button>
+            <button className={`sidebar-item ${view === "how" ? "active" : ""}`} title="Guide" aria-label="Guide" onClick={() => setView("how")}><HowIcon />Guide</button>
           </div>
           <div className="sidebar-group">
             <div className="sidebar-group-label">Operations</div>
-            <button className={`sidebar-item ${view === "operational" ? "active" : ""}`} onClick={() => setView("operational")}>
+            <button className={`sidebar-item ${view === "operational" ? "active" : ""}`} title="Live Case" aria-label="Live Case" onClick={() => setView("operational")}>
               <LiveCaseIcon />Live Case
               {computeBadge("operational") && <span className="sidebar-badge">{computeBadge("operational")}</span>}
             </button>
           </div>
           <div className="sidebar-group">
             <div className="sidebar-group-label">Intelligence</div>
-            <button className={`sidebar-item ${view === "capture" ? "active" : ""}`} onClick={() => setView("capture")}><CaptureIcon />Capture know-how</button>
-            <button className={`sidebar-item ${view === "pills" ? "active" : ""}`} onClick={() => { setExactPillVersion(null); setView("pills"); }}>
+            <button className={`sidebar-item ${view === "capture" ? "active" : ""}`} title="Capture know-how" aria-label="Capture know-how" onClick={() => setView("capture")}><CaptureIcon />Capture know-how</button>
+            <button className={`sidebar-item ${view === "pills" ? "active" : ""}`} title="Intelligence Pills" aria-label="Intelligence Pills" onClick={() => { setExactPillVersion(null); setView("pills"); }}>
               <PillIcon />Intelligence Pills
               {computeBadge("pills") && <span className="sidebar-badge">{computeBadge("pills")}</span>}
             </button>
-            <button className={`sidebar-item ${view === "evolution" ? "active" : ""}`} onClick={() => { setEvolutionRecId(null); setView("evolution"); }}><EvolutionIcon />Knowledge Evolution</button>
+            <button className={`sidebar-item ${view === "evolution" ? "active" : ""}`} title="Knowledge Evolution" aria-label="Knowledge Evolution" onClick={() => { setEvolutionRecId(null); setView("evolution"); }}><EvolutionIcon />Knowledge Evolution</button>
           </div>
         </nav>
 

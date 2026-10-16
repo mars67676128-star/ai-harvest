@@ -7,6 +7,7 @@ import { DEMO_INTERVIEWS } from "../lib/demoInterviews";
 import { DomainIcon } from "./DomainIcon";
 import { Term, Avatar } from "./Term";
 import { persona } from "../lib/glossary";
+import { cleanText } from "../lib/format";
 
 const TECHNIQUE_PLAIN: Record<string, { label: string; why: string }> = {
   "incident reconstruction": { label: "Walk through a real incident", why: "Anchors the interview in what actually happened, not the textbook." },
@@ -43,7 +44,7 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
   const isExpert = role === "expert";
   const [questions, setQuestions] = useState<ElicitationQuestion[]>([]);
   const [which, setWhich] = useState(0);
-  const [transcript, setTranscript] = useState(DEMO_INTERVIEWS[0].transcript);
+  const [transcript, setTranscript] = useState(cleanText(DEMO_INTERVIEWS[0].transcript));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<ExtractionRecord | null>(null);
@@ -54,20 +55,23 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
 
   const pick = (i: number) => {
     setWhich(i);
-    setTranscript(DEMO_INTERVIEWS[i].transcript);
+    setTranscript(cleanText(DEMO_INTERVIEWS[i].transcript));
     setDraft(null);
     setError(null);
   };
   const interview = DEMO_INTERVIEWS[which];
-  const edited = transcript !== interview.transcript;
+  const edited = transcript.trim() !== cleanText(interview.transcript);
 
   const run = async () => {
     setBusy(true);
     setError(null);
     setDraft(null);
     try {
-      const cap = await createCapture({ title: interview.title, transcript, domain: interview.domain, synthetic: true });
+      const cap = await createCapture({ title: interview.title, transcript: edited ? transcript : interview.transcript, domain: interview.domain, synthetic: true });
+      const started = Date.now();
       const ex = await extractCapture(cap.id);
+      const wait = 2800 - (Date.now() - started);
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
       setDraft(ex);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -128,7 +132,7 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
             <Avatar actor="expert" size={34} />
             <div>
               <div><b>{tan.name}</b> · {tan.title}</div>
-              <div className="text-muted text-sm">{interview.title} · recorded, synthetic demo interview</div>
+              <div className="text-muted text-sm">{interview.title} · recorded interview</div>
             </div>
           </div>
           <textarea
@@ -155,6 +159,12 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
             </div>
           )}
           {error && <div className="error-box mt-8">{error}</div>}
+          {busy && (
+            <div className="ai-skeleton mt-16" aria-label="Drafting">
+              <div className="ai-writing">AI is reading the interview and drafting rules…</div>
+              <span /><span /><span />
+            </div>
+          )}
         </div>
       </section>
 
@@ -163,7 +173,7 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
         <section className="cap-section">
           <h2 className="cap-h"><span className="how-n">3</span> AI's draft — for people to check</h2>
           <div className="callout callout-ai">
-            <b>AI-generated, not authoritative.</b> {draft.summary}
+            <b>AI-generated, not authoritative.</b> {cleanText(draft.summary)}
             <div className="text-sm mt-8">
               {draft.ai?.live ? "Live model" : "Offline demo AI (recorded output)"} · {String(draft.ai?.model ?? "")} · prompt {String(draft.ai?.prompt_version ?? "")}
             </div>

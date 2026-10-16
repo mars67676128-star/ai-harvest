@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { actorLabel, readingLabel, conditionsText, cleanText } from "../lib/format";
 import type { PillVersion } from "../types";
 import { getPillVersion, getRole } from "../api";
 import { DomainIcon } from "./DomainIcon";
@@ -41,8 +42,8 @@ export function ExactPillView({
   return (
     <div>
       <div className="source-attribution mb-16">
-        <span className="source-label">Exact version requested:</span>
-        <span>{pill.pill_id}</span>
+        <span className="source-label">Version:</span>
+        <span>{pill.content.name}</span>
         <span className={badge(pill.status)}>v{pill.version} · {pill.status}</span>
       </div>
 
@@ -81,12 +82,12 @@ export function ExactPillView({
           <div className="kv">
             <div><dt>Version</dt><dd>v{pill.version}</dd></div>
             <div><dt>Status</dt><dd>{pill.status}</dd></div>
-            <div><dt>Author</dt><dd>{pill.author}</dd></div>
-            <div><dt>Owner</dt><dd>{pill.owner}</dd></div>
-            <div><dt>Reviewers</dt><dd>{pill.reviewers.join(", ")}</dd></div>
+            <div><dt>Written by</dt><dd>{actorLabel(pill.author)}</dd></div>
+            <div><dt>Owner</dt><dd>{actorLabel(pill.owner)}</dd></div>
+            <div><dt>Reviewers</dt><dd>{pill.reviewers.map(actorLabel).join(", ")}</dd></div>
             <div><dt>Previous version</dt><dd>{pill.previous_version ?? "—"}</dd></div>
-            <div><dt>Content hash</dt><dd>{pill.content_hash}</dd></div>
-            <div><dt>Change reason</dt><dd>{pill.change_reason}</dd></div>
+            {getRole() !== "operator" && <div><dt>Content fingerprint</dt><dd className="tech-meta">{pill.content_hash.slice(0, 16)}…</dd></div>}
+            <div><dt>Change reason</dt><dd>{cleanText(pill.change_reason)}</dd></div>
           </div>
           <div className="flex gap-8 flex-wrap mt-16">
             <span className={pill.review ? "badge badge-success" : "badge badge-neutral"}>Review {pill.review ? "recorded" : "pending"}</span>
@@ -97,23 +98,22 @@ export function ExactPillView({
       </div>
 
       <div className="card mb-16">
-        <div className="card-header"><span className="card-title">Capability Definition</span></div>
+        <div className="card-header"><span className="card-title">What this version checks</span></div>
         <div className="card-body">
           <div className="section-heading">Expert observations</div>
           <ul>{pill.content.expert_observations.map((item) => <li key={item}>{item}</li>)}</ul>
-          <div className="section-heading mt-16">Inputs</div>
+          <div className="section-heading mt-16">Readings it needs</div>
           {pill.content.inputs.map((input) => (
             <div className="regression-row" key={input.key}>
-              <div className="regression-row-title">{input.key}</div>
-              <div className="text-muted">{input.description} · {input.kind}{input.unit ? ` · ${input.unit}` : ""} · {input.required ? "required" : "optional"}</div>
+              <div className="regression-row-title">{readingLabel(input.key)}</div>
+              <div className="text-muted">{input.kind === "boolean" ? "Yes / No" : "Number"}{input.unit ? ` · ${input.unit}` : ""} · {input.required ? "required" : "optional"}</div>
             </div>
           ))}
-          <div className="section-heading mt-16">Deterministic rules</div>
+          <div className="section-heading mt-16">Rules</div>
           {pill.content.rules.map((rule) => (
             <div className={`rule-card ${rule.category}`} key={rule.id}>
-              <div className="rule-card-name">{rule.id.replace(/_/g, " ")}</div>
+              <div className="rule-card-name">If {conditionsText(rule.when).toLowerCase()}</div>
               <div>{rule.rationale}</div>
-              <div className="text-muted mt-8">When: {rule.when.map((condition) => `${condition.input} ${condition.op} ${String(condition.value)}`).join(" AND ")}</div>
             </div>
           ))}
         </div>
@@ -134,9 +134,8 @@ export function ExactPillView({
         <div className="card-body">
           {pill.content.evidence.map((evidence) => (
             <div className="pill-provenance mb-16" key={evidence.id}>
-              <div className="pill-prov-name">{evidence.kind}{evidence.synthetic ? " · synthetic" : ""}</div>
-              <div>{evidence.summary}</div>
-              <div className="tech-meta mt-8">{evidence.citation}</div>
+              <div className="pill-prov-name">{evidence.kind === "expert_interview" ? "Expert interview" : evidence.kind === "public_context" ? "Public guidance" : evidence.kind === "feedback" ? "Operator feedback" : evidence.kind}</div>
+              <div>{cleanText(evidence.summary)}</div>
             </div>
           ))}
         </div>

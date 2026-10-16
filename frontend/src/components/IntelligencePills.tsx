@@ -4,6 +4,7 @@ import { downloadPillJson, printPillSheet } from "../lib/pillExport";
 import { DomainIcon } from "./DomainIcon";
 import { Term, Avatar } from "./Term";
 import { persona } from "../lib/glossary";
+import { actorLabel, sgTime, readingLabel, conditionsText, cleanText, isDemoDisclaimer } from "../lib/format";
 import {
   getPills,
   getPillVersions,
@@ -45,8 +46,7 @@ function lifecycleIndex(status: Status): number {
 }
 
 function fmtDate(iso: string | null): string {
-  if (!iso) return "—";
-  return iso.slice(0, 19).replace("T", " ") + " UTC";
+  return sgTime(iso);
 }
 
 function fmtHash(hash: string): string {
@@ -80,10 +80,7 @@ function auditEventLabel(event: string): string {
 }
 
 function capitaliseActor(actor: string): string {
-  if (!actor) return "—";
-  // Strip "demo-" prefix and capitalise: "demo-operator" → "Operator"
-  const name = actor.replace(/^demo[-_]/, "");
-  return name.charAt(0).toUpperCase() + name.slice(1);
+  return actorLabel(actor);
 }
 
 function auditEventToLifecycleStep(event: string): number {
@@ -374,7 +371,7 @@ function PillRegistry({
                         <DomainIcon domain={p.content.domain} size={34} />
                         <div>
                           <div style={{ fontWeight: 600 }}>{p.content.name}</div>
-                          <div className="tech-meta">{p.pill_id}</div>
+                          {getRole() !== "operator" && <div className="tech-meta pill-id-meta">{p.pill_id}</div>}
                         </div>
                       </div>
                     </td>
@@ -587,7 +584,6 @@ function GovernanceLifecycle({
                   </div>
                   <div className="text-sm text-muted" style={{ marginTop: 4 }}>
                     Actor: <strong>{capitaliseActor(entry.actor)}</strong>
-                    <span className="demo-persona"> · demo persona</span>
                   </div>
                 </li>
               ))}
@@ -616,11 +612,11 @@ function GovernanceLifecycle({
 // --- Governance Gate ---
 
 const GATE_FIELD_LABELS: Record<string, string> = {
-  actor: "Actor",
-  at: "Timestamp",
-  content_hash: "Content Hash",
+  actor: "Signed by",
+  at: "When",
+  content_hash: "Content fingerprint",
   note: "Note",
-  passed: "Validation Passed",
+  passed: "All test situations passed",
 };
 
 function GovernanceGate({
@@ -669,8 +665,12 @@ function GovernanceGate({
         {summaryFields.map((field) => {
           const val = record[field];
           if (val === undefined || val === null || val === "") return null;
+          if (field === "content_hash" && getRole() === "operator") return null;
           const display = field === "at" ? fmtDate(String(val)) :
-            field === "content_hash" ? fmtHash(String(val)) : String(val);
+            field === "actor" ? actorLabel(String(val)) :
+            field === "note" ? cleanText(String(val)) :
+            field === "content_hash" ? fmtHash(String(val)) :
+            typeof val === "boolean" ? (val ? "Yes" : "No") : String(val);
           return (
             <div key={field}><dt>{GATE_FIELD_LABELS[field] ?? field}</dt><dd>{display}</dd></div>
           );
@@ -708,15 +708,14 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
       <div className="obs-grid mb-16">
         {inputs.map((inp) => (
           <div key={inp.key} className="input-card">
-            <div className="input-card-name">{inp.key.replace(/_/g, " ")}</div>
-            <div className="input-card-desc">{inp.description}</div>
+            <div className="input-card-name">{readingLabel(inp.key)}</div>
+            {!/^synthetic/i.test(inp.description) && <div className="input-card-desc">{inp.description}</div>}
             <div className="input-card-meta">
-              <span className="input-card-chip">{inp.kind}</span>
+              <span className="input-card-chip">{inp.kind === "boolean" ? "Yes / No" : inp.kind === "number" ? "Number" : "Text"}</span>
               {inp.required && <span className="input-card-chip" style={{ color: "var(--warning)", borderColor: "var(--warning-border)" }}>Required</span>}
               {inp.unit && <span className="input-card-chip">Unit: {inp.unit}</span>}
-              <span className="input-card-chip">Max age: {inp.max_age_seconds}s</span>
+              <span className="input-card-chip">Must be under {Math.round(inp.max_age_seconds / 60)} min old</span>
             </div>
-            <div className="tech-meta mt-8">{inp.key}</div>
           </div>
         ))}
       </div>
@@ -728,11 +727,11 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
         <>
           <div className="section-heading">What the expert knows</div>
           <div className="mb-16">
-            {facts.length > 0 && (
+            {facts.filter((f) => !isDemoDisclaimer(f)).length > 0 && (
               <div className="mb-16">
                 <div className="text-muted text-sm mb-8">Facts</div>
                 <ul className="boundary-list">
-                  {facts.map((f, i) => (
+                  {facts.filter((f) => !isDemoDisclaimer(f)).map((f, i) => (
                     <li key={i}><span className="boundary-icon" style={{ color: "var(--accent)" }}>•</span><span>{f}</span></li>
                   ))}
                 </ul>
@@ -780,21 +779,12 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
           <div key={i} className={`rule-card ${r.category}`}>
             <div className="rule-card-head">
               <div>
-                <span className="rule-card-name">{r.id.replace(/_/g, " ")}</span>
-                <div className="tech-meta">{r.id}</div>
+                <span className="rule-card-name">If {conditionsText(r.when).toLowerCase()}</span>
               </div>
               <span className="rule-card-category">{r.category}</span>
             </div>
             <div className="rule-card-rationale">{r.rationale}</div>
-            <div className="rule-card-evidence">
-              <strong>When:</strong>{" "}
-              {r.when.map((w, j) => (
-                <span key={j} style={{ marginLeft: 8 }}>
-                  {w.input.replace(/_/g, " ")} {w.op} {String(w.value)}
-                  {j < r.when.length - 1 ? " ∧" : ""}
-                </span>
-              ))}
-            </div>
+
             {r.recommend.length > 0 && (
               <div className="rule-card-evidence">
                 <strong>Recommend:</strong> {r.recommend.map(actionLabel).join(", ")}
@@ -810,9 +800,11 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
                 <strong>Escalate to:</strong> {r.escalate_to}
               </div>
             )}
-            <div className="rule-card-evidence">
-              <strong>Evidence:</strong> {r.evidence_ids.join(", ")}
-            </div>
+            {getRole() !== "operator" && (
+              <details className="tech-details"><summary>Technical details</summary>
+                <div className="tech-meta">Rule ID: {r.id} · Condition: {r.when.map((w) => `${w.input} ${w.op} ${String(w.value)}`).join(" ∧ ")} · Evidence: {r.evidence_ids.join(", ")}</div>
+              </details>
+            )}
           </div>
         ))}
       </div>
@@ -905,24 +897,13 @@ function EvidenceProvenance({ pill, defaultOpen }: { pill: PillVersion; defaultO
         {evidence.map((e) => (
           <div key={e.id} className="input-card">
             <div className="flex-between mb-8">
-              <span className="input-card-name">{e.id.replace(/_/g, " ")}</span>
-              {e.synthetic ? (
-                <span className="badge badge-warning">Synthetic</span>
-              ) : (
-                <span className="badge badge-success">Public context</span>
-              )}
+              <span className="input-card-name">{e.kind === "expert_interview" ? "Expert interview" : e.kind === "public_context" ? "Public guidance" : e.kind === "feedback" ? "Operator feedback" : e.kind === "incident" ? "Past incident" : e.kind}</span>
+              {e.kind === "public_context" && <span className="badge badge-neutral">Context only</span>}
             </div>
-            <div className="input-card-desc">{e.summary}</div>
-            <div className="tech-meta mt-8">{e.citation}</div>
-            <div className="input-card-meta mt-8">
-              <span className="input-card-chip">{e.kind.replace(/_/g, " ")}</span>
-            </div>
-            <div className="tech-meta mt-8">{e.id}</div>
+            <div className="input-card-desc">{cleanText(e.summary)}</div>
+            {/^https?:/.test(e.citation) && <div className="tech-meta mt-8">{e.citation}</div>}
           </div>
         ))}
-      </div>
-      <div className="callout callout-info mt-16">
-Demo data: synthetic interview.
       </div>
     </Collapsible>
   );
@@ -941,6 +922,15 @@ function decisionBadgeClass(decision: string): string {
   if (decision === "HUMAN_REVIEW") return "badge badge-info";
   return "badge badge-neutral";
 }
+
+const REGRESSION_TITLES: Record<string, string> = {
+  rising: "Water rising while the pump shows running",
+  stable: "Water steady, pump running, no equipment at risk",
+  critical: "Electrical equipment at risk",
+  missing: "Required readings missing",
+  scope: "Outside this pill's scope (different equipment)",
+  "flat-but-backflow": "Water looks steady but is backing up from the drain",
+};
 
 function buildRegressionTitle(tc: Record<string, unknown>): string {
   const inputs = (tc.inputs as Record<string, unknown>) ?? {};
@@ -961,7 +951,7 @@ function buildRegressionTitle(tc: Record<string, unknown>): string {
   if (arrivals !== undefined) parts.push(arrivals ? "arrivals expected" : "no arrivals");
   if (criticalExposed !== undefined) parts.push(criticalExposed ? "critical exposed" : "no critical exposure");
 
-  return parts.length > 0 ? parts.join(", ") : "Default case";
+  return parts.length > 0 ? parts.join(", ") : "Readings missing";
 }
 
 function ValidationObligations({ pill, defaultOpen }: { pill: PillVersion; defaultOpen: boolean }) {
@@ -984,7 +974,7 @@ function ValidationObligations({ pill, defaultOpen }: { pill: PillVersion; defau
         const expectedDecision = (tc.expected_decision as string) ?? "ABSTAIN";
         const expectedActions = (tc.expected_actions as string[]) ?? [];
         const expectedBlocked = (tc.expected_blocked as string[]) ?? [];
-        let title = rawTitles[i] || id;
+        let title = REGRESSION_TITLES[id] ?? (rawTitles[i] || id);
         if ((titleCounts.get(title) ?? 0) > 1) title = `${title} (${id.replace(/_/g, " ")})`;
         const isNew = pill.previous_version && newCaseIds && newCaseIds.size > 0 && id === "flat-but-backflow";
 
@@ -994,7 +984,7 @@ function ValidationObligations({ pill, defaultOpen }: { pill: PillVersion; defau
               <span className="regression-row-title">{title}</span>
               <span className="regression-row-arrow">→</span>
               <span className={decisionBadgeClass(expectedDecision)}>
-                {DECISION_LABELS[expectedDecision] ?? expectedDecision}
+                {expectedDecision === "HUMAN_REVIEW" && expectedActions.includes("monitor_trend") ? "Keep monitoring (person confirms)" : (DECISION_LABELS[expectedDecision] ?? expectedDecision)}
               </span>
               {isNew ? (
                 <span className="regression-row-badge-new">New in v{pill.version}</span>
@@ -1055,10 +1045,10 @@ function VersionLineage({
                 <span className="timeline-time">{fmtDate(v.created_at)}</span>
               </div>
               {v.change_reason && (
-                <div className="text-sm text-muted mt-8">{v.change_reason}</div>
+                <div className="text-sm text-muted mt-8">{cleanText(v.change_reason)}</div>
               )}
               <div className="text-sm text-muted mt-8">
-                Previous: {v.previous_version ? `v${v.previous_version}` : "—"} · Hash: {fmtHash(v.content_hash)}
+                Written by {actorLabel(v.author)}{v.previous_version ? ` · replaces v${v.previous_version}` : ""}
               </div>
             </li>
           ))}

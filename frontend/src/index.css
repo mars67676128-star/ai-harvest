@@ -995,3 +995,18 @@ details[open] > summary::before { content: "▾ "; }
 .chg-mod { background: var(--info-light); color: var(--info); }
 .chg-src { background: var(--neutral-light); color: var(--text-muted); }
 .raw-diff summary { cursor: pointer; font-size: 13px; color: var(--text-muted); margin: 4px 0 8px; }
+
+/* Global demo banner */
+.demo-banner { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 6px 16px; background: #fdf3e1; color: #7a5310; font-size: 12.5px; font-weight: 600; border-bottom: 1px solid #f0dcb4; }
+.demo-banner button { border: none; background: none; font-size: 18px; line-height: 1; color: #7a5310; cursor: pointer; }
+.tech-details { margin-top: 8px; font-size: 12.5px; color: var(--text-muted); }
+.tech-details summary { cursor: pointer; }
+.boundary-summary { background: var(--surface); border-radius: var(--r-md); box-shadow: var(--shadow-sm); padding: 12px 16px; font-size: 14px; color: var(--text-secondary); }
+.boundary-summary summary { cursor: pointer; }
+.boundary-summary .boundary-list { margin-top: 10px; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 900px) { .pill-id-meta { display: none; } .pill-table th:nth-child(5), .pill-table td:nth-child(5) { display: none; } }
+
+/* conflict label */
+.conflict-label { display: inline-block; margin: 4px 0 8px; padding: 3px 10px; border-radius: 999px; background: var(--danger-light); color: var(--danger); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.conflict-divider { font-size: 12px; font-weight: 700; color: var(--text-muted, #64748b); text-transform: uppercase; }

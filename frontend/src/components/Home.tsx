@@ -6,6 +6,7 @@ import type { AuditEntry } from "../api";
 import { DomainIcon } from "./DomainIcon";
 import { Term, Avatar } from "./Term";
 import { GLOSSARY, persona } from "../lib/glossary";
+import { sgTime } from "../lib/format";
 import { getFeedbackIds, candidateForFeedback, getRememberedRejection, setActiveRec } from "../lib/demoState";
 
 type Go = {
@@ -26,13 +27,6 @@ interface Task {
 
 
 
-function ago(iso: string) {
-  const d = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (d < 60) return "just now";
-  if (d < 3600) return `${Math.floor(d / 60)} min ago`;
-  if (d < 86400) return `${Math.floor(d / 3600)} h ago`;
-  return new Date(iso).toLocaleDateString();
-}
 
 type FeedItem = { key: string; actor: string; at: string; text: ReactNode };
 
@@ -106,15 +100,15 @@ export function Home({ onGoToHowItWorks, onGoToLiveCase, onGoToEvolution, onGoTo
         const all = (await Promise.all(ids.map((pid) => getPillVersions(pid).catch(() => [] as PillVersion[])))).flat();
         if (!cancelled) setVersions(all);
       } catch { /* backend down — shown below */ }
-      try {
+      if (role === "operator" || role === "approver") try {
         const list = await getRecommendations();
         const hydrated = await Promise.all(list.map((r) => getRecommendation(r.id).catch(() => r)));
         if (!cancelled) setRecs(hydrated);
-      } catch { if (!cancelled) setRecs(null); }
-      try {
+      } catch { if (!cancelled) setRecs(null); } else if (!cancelled) setRecs(null);
+      if (role === "reviewer" || role === "approver") try {
         const h = await getAuditHistory(undefined, 0, 500);
         if (!cancelled) setAudit(h.items);
-      } catch { if (!cancelled) setAudit(null); }
+      } catch { if (!cancelled) setAudit(null); } else if (!cancelled) setAudit(null);
       if (!cancelled) setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -137,11 +131,11 @@ export function Home({ onGoToHowItWorks, onGoToLiveCase, onGoToEvolution, onGoTo
     for (const r of recs ?? []) {
       if (r.result.decision === "ESCALATE" && !r.human_decision && role === "operator") {
         tasks.push({ key: `dec-${r.id}`, tone: "warning", title: "Escalation awaiting your decision",
-          detail: `Assessment at ${r.created_at.slice(11, 16)} UTC.`,
+          detail: `Assessment at ${sgTime(r.created_at)}.`,
           cta: "Open case", go: onGoToLiveCase });
       } else if (r.human_decision && !r.outcome && role === "operator") {
         tasks.push({ key: `out-${r.id}`, tone: "action", title: "Record what actually happened",
-          detail: `Escalation at ${r.created_at.slice(11, 16)} UTC has no outcome yet.`,
+          detail: `Escalation at ${sgTime(r.created_at)} has no outcome yet.`,
           cta: "Record outcome", go: () => goRec(r.id) });
       } else if (r.outcome && role === "operator") {
         const fbs = getFeedbackIds(r.id);
@@ -178,7 +172,7 @@ export function Home({ onGoToHowItWorks, onGoToLiveCase, onGoToEvolution, onGoTo
   }
   if (role === "operator" && (recs?.length ?? 0) === 0) {
     tasks.push({ key: "first", tone: "action", title: "Run your first operational assessment",
-      detail: "Harbour Exchange basement sump — wet weather, synthetic demo case.", cta: "Start", go: onGoToLiveCase });
+      detail: "Harbour Exchange basement sump, wet weather.", cta: "Start", go: onGoToLiveCase });
   }
 
 
@@ -338,7 +332,7 @@ export function Home({ onGoToHowItWorks, onGoToLiveCase, onGoToEvolution, onGoTo
                   <Avatar actor={f.actor} size={30} />
                   <div>
                     <div className="feed-text"><b>{persona(f.actor).name}</b> {f.text}</div>
-                    <div className="feed-time">{persona(f.actor).title} · {ago(f.at)}</div>
+                    <div className="feed-time">{persona(f.actor).title} · {sgTime(f.at)}</div>
                   </div>
                 </li>
               ))}

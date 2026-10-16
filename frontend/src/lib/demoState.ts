@@ -7,6 +7,7 @@ import type { PillVersion } from "../types";
 export const LS_REC = "harvest.ke.recId";
 const fbKey = (recId: string) => `harvest.ke.feedback.${recId}`;
 const rejectKey = (pillId: string, version: string) => `harvest.ke.reject.${pillId}@${version}`;
+const ROLE_STORAGE_KEY = "ai-harvest-role";
 
 export function lsGet(k: string): string | null {
   try { return localStorage.getItem(k); } catch { return null; }
@@ -46,6 +47,13 @@ export function addFeedbackId(recId: string, id: string) {
   lsSet(fbKey(recId), JSON.stringify(ids));
 }
 export function setFeedbackIds(recId: string, ids: string[]) {
+  // Viewer is intentionally forbidden from GET /feedback/{id}. A failed verification
+  // under that role must not be mistaken for a stale record and destroy the opaque pointer.
+  if (ids.length === 0 && lsGet(ROLE_STORAGE_KEY) === "viewer") return;
+  if (ids.length === 0) {
+    lsDel(fbKey(recId));
+    return;
+  }
   lsSet(fbKey(recId), JSON.stringify(ids));
 }
 

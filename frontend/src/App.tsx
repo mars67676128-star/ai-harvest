@@ -3,6 +3,7 @@ import { getHealth, setRole, getPills, getRecommendations, getRecommendation } f
 import type { PillVersion, RecommendationRecord } from "./types";
 import { LiveCase } from "./components/FinalLiveCase";
 import { IntelligencePills } from "./components/IntelligencePills";
+import { ExactPillView } from "./components/ExactPillView";
 import { KnowledgeEvolution } from "./components/FinalKnowledgeEvolution";
 import { Home } from "./components/Home";
 import { HowItWorks } from "./components/HowItWorks";
@@ -36,6 +37,7 @@ export default function App() {
   const [recommendations, setRecommendations] = useState<RecommendationRecord[]>([]);
   const [evolutionRecId, setEvolutionRecId] = useState<string | null>(null);
   const [pillsSelectedId, setPillsSelectedId] = useState<string | null>(null);
+  const [exactPillVersion, setExactPillVersion] = useState<string | null>(null);
 
   useEffect(() => {
     getHealth().then(setHealth).catch(() => {});
@@ -54,6 +56,27 @@ export default function App() {
     setRoleState(r);
     try { localStorage.setItem(ROLE_STORAGE_KEY, r); } catch { /* ignore */ }
   }, []);
+
+  const openRegistryPill = useCallback((pillId: string) => {
+    setPillsSelectedId(pillId);
+    setExactPillVersion(null);
+    setView("pills");
+  }, []);
+
+  const openGovernancePill = useCallback((pillId: string) => {
+    // Knowledge Evolution knows which governance state the user is looking at even though
+    // its legacy callback passes only pill_id. Preserve that exact candidate here instead
+    // of silently falling back to the approved release.
+    const targetStatus = role === "expert" ? "DRAFT" : role === "reviewer" ? "IN_REVIEW" : null;
+    const exact = targetStatus
+      ? [...pills]
+          .filter((p) => p.pill_id === pillId && p.status === targetStatus)
+          .sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
+      : undefined;
+    setPillsSelectedId(pillId);
+    setExactPillVersion(exact?.version ?? null);
+    setView("pills");
+  }, [pills, role]);
 
   const computeBadge = (target: View): number | null => {
     if (target === "pills") {
@@ -107,7 +130,7 @@ export default function App() {
           </div>
           <div className="sidebar-group">
             <div className="sidebar-group-label">Intelligence</div>
-            <button className={`sidebar-item ${view === "pills" ? "active" : ""}`} onClick={() => setView("pills")}>
+            <button className={`sidebar-item ${view === "pills" ? "active" : ""}`} onClick={() => { setExactPillVersion(null); setView("pills"); }}>
               <PillIcon />Intelligence Pills
               {computeBadge("pills") && <span className="sidebar-badge">{computeBadge("pills")}</span>}
             </button>
@@ -123,28 +146,35 @@ export default function App() {
               onGoToHowItWorks={() => setView("how")}
               onGoToLiveCase={() => setView("operational")}
               onGoToEvolution={(recId?: string) => { setEvolutionRecId(recId ?? null); setView("evolution"); }}
-              onGoToPill={(pillId: string) => { setPillsSelectedId(pillId); setView("pills"); }}
+              onGoToPill={openRegistryPill}
             />
           )}
           {view === "operational" && (
             <LiveCase
               key={`live-${role}`}
               onGoToEvolution={(recId: string) => { setEvolutionRecId(recId); setView("evolution"); }}
-              onGoToPill={(pillId: string) => { setPillsSelectedId(pillId); setView("pills"); }}
+              onGoToPill={openRegistryPill}
             />
           )}
-          {view === "pills" && (
+          {view === "pills" && pillsSelectedId && exactPillVersion ? (
+            <ExactPillView
+              key={`exact-${pillsSelectedId}-${exactPillVersion}-${role}`}
+              pillId={pillsSelectedId}
+              version={exactPillVersion}
+              onBack={() => setExactPillVersion(null)}
+            />
+          ) : view === "pills" && (
             <IntelligencePills
               key={`pills-${role}`}
               selectedPillId={pillsSelectedId}
-              onSelectedPillIdChange={setPillsSelectedId}
+              onSelectedPillIdChange={(id) => { setPillsSelectedId(id); setExactPillVersion(null); }}
             />
           )}
           {view === "evolution" && (
             <KnowledgeEvolution
               key={`evo-${evolutionRecId ?? "none"}-${role}`}
               preselectedRecId={evolutionRecId}
-              onGoToPill={(pillId: string) => { setPillsSelectedId(pillId); setView("pills"); }}
+              onGoToPill={openGovernancePill}
               onGoToLiveCase={() => setView("operational")}
               onRefreshPills={() => { getPills().then(setPills).catch(() => {}); }}
             />

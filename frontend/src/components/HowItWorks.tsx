@@ -1,3 +1,6 @@
+import { useState } from "react";
+import { GLOSSARY, PERSONAS } from "../lib/glossary";
+
 // "How AI HARVEST works" — a standalone orientation page for first-time users and judges.
 
 const STEPS = [
@@ -24,10 +27,10 @@ const STEPS = [
 ];
 
 const ROLES = [
-  { role: "Operator", who: "Building operations staff on shift", can: "Run assessments, record escalations, report outcomes and feedback" },
-  { role: "Expert", who: "Senior engineer who owns the know-how", can: "Check AI proposals against their expertise, submit for review, revise after rejection" },
-  { role: "Reviewer", who: "A different senior engineer", can: "Independently review changes, run regression tests, reject with a reason" },
-  { role: "Approver", who: "Owner of the knowledge area", can: "Release a new version (which supersedes the old one) or retire a version" },
+  { role: "Operator", who: `Building operations staff on shift — in this demo, ${PERSONAS.operator.name}`, can: "Run assessments, record escalations, report outcomes and feedback" },
+  { role: "Expert", who: `Senior technician whose know-how is captured — ${PERSONAS.expert.name}`, can: "Check AI proposals against their expertise, submit for review, revise after rejection" },
+  { role: "Reviewer", who: `A different senior engineer — ${PERSONAS.reviewer.name}`, can: "Independently review changes, run regression tests, reject with a reason" },
+  { role: "Approver", who: `Owner of the knowledge area — ${PERSONAS.approver.name}`, can: "Release a new version (which supersedes the old one) or retire a version" },
   { role: "Viewer", who: "Management, auditors, colleagues", can: "Read every pill and decision — change nothing" },
 ];
 
@@ -89,6 +92,9 @@ export function HowItWorks({ onStart }: { onStart: () => void }) {
         ))}
       </ul>
 
+      <h2 className="home-h2 mt-24" id="glossary">Glossary — every term in plain words</h2>
+      <Glossary />
+
       <h2 className="home-h2 mt-24">Reading the colours</h2>
       <div className="how-legend">
         <span><i className="lg lg-teal" />Approved organisational knowledge</span>
@@ -105,6 +111,26 @@ export function HowItWorks({ onStart }: { onStart: () => void }) {
         <button className="btn btn-primary" onClick={onStart}>Start the demo →</button>
       </div>
       <p className="text-muted text-sm mt-16">All people, buildings, readings and outcomes in this demo are synthetic.</p>
+    </div>
+  );
+}
+
+function Glossary() {
+  const [f, setF] = useState("");
+  const t = f.toLowerCase().trim();
+  const list = GLOSSARY.filter((g) => !t || `${g.term} ${g.plain}`.toLowerCase().includes(t));
+  return (
+    <div className="glossary">
+      <input className="glossary-filter" value={f} onChange={(e) => setF(e.target.value)} placeholder="Filter terms…" aria-label="Filter glossary" />
+      <dl className="glossary-list">
+        {list.map((g) => (
+          <div key={g.key} className="glossary-row">
+            <dt>{g.term}</dt>
+            <dd>{g.plain}{g.example && <span className="glossary-ex">e.g. {g.example}</span>}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="text-muted text-sm mt-8">Terms with a dotted underline anywhere in the app show these definitions when you hover over them.</p>
     </div>
   );
 }

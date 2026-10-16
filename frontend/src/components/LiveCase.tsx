@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { DomainIcon } from "./DomainIcon";
+import { Term } from "./Term";
+import { persona } from "../lib/glossary";
 import { setActiveRec } from "../lib/demoState";
 import type {
   CaseRecord,
@@ -87,6 +89,7 @@ function extractEscalationRoles(escalations: string[]): string[] {
   const roles: string[] = [];
   for (const esc of escalations) {
     const colonIdx = esc.indexOf(":");
+    if (/^[A-Z_]+:/.test(esc)) continue; // system codes like MISSING_INPUT are not people
     if (colonIdx >= 0) {
       const role = esc.slice(colonIdx + 1).trim();
       if (role) roles.push(role);
@@ -363,9 +366,9 @@ function RecommendationDetail({
   const governanceExpanded = role === "expert" || role === "reviewer" || role === "approver";
 
   const decisionBadge = (d: string) => {
-    if (d === "ESCALATE") return <span className="badge badge-warning">Escalate</span>;
-    if (d === "HUMAN_REVIEW") return <span className="badge badge-info">Needs review</span>;
-    return <span className="badge badge-neutral">Abstain</span>;
+    if (d === "ESCALATE") return <span className="badge badge-warning"><Term k="escalate">Escalate</Term></span>;
+    if (d === "HUMAN_REVIEW") return <span className="badge badge-info"><Term k="needs-review">Needs review</Term></span>;
+    return <span className="badge badge-neutral"><Term k="abstain">Abstain</Term></span>;
   };
 
   const escalationRoles = extractEscalationRoles(result.escalations);
@@ -381,7 +384,7 @@ function RecommendationDetail({
     <div>
       {/* Source attribution — WHO decided */}
       <div className="source-attribution">
-        <span className="source-label">This recommendation comes from:</span>
+        <span className="source-label">This recommendation comes from these <Term k="pill">pills</Term>:</span>
         {capabilities.map((cap, i) => (
           <span key={cap.pill_id} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
             {i > 0 && <span className="text-muted">+</span>}
@@ -401,7 +404,7 @@ function RecommendationDetail({
       {/* Escalation banner */}
       {isEscalation && (
         <div className="escalation-banner">
-          <span className="escalation-title">Escalation Required</span>
+          <span className="escalation-title"><Term k="escalate">Escalation</Term> required</span>
           <span className="no-exec-chip">No autonomous execution</span>
           {escalationRoles.length > 0 && (
             <div className="flex gap-8 flex-wrap" style={{ alignItems: "center" }}>
@@ -414,10 +417,24 @@ function RecommendationDetail({
         </div>
       )}
 
+      {result.decision === "ABSTAIN" && (() => {
+        const missing = [...new Set([...result.escalations, ...capabilities.flatMap((c) => c.escalations)]
+          .filter((e) => e.startsWith("MISSING_INPUT"))
+          .map((e) => obsLabel(e.slice(e.indexOf(":") + 1).trim())))];
+        return (
+          <div className="callout callout-info">
+            <strong><Term k="abstain">No recommendation</Term> — not enough information.</strong>{" "}
+            {missing.length > 0
+              ? <>The approved pill now also needs a reading for <b>{missing.join(", ")}</b>, which this assessment didn't include. Rather than guess, it stays silent and a qualified person must assess.</>
+              : <>A reading the pill needs is missing or unreliable, so it won't guess. A qualified person must assess.</>}
+          </div>
+        );
+      })()}
+
       {/* Key heuristic quote — near the top, attributed */}
       {opsCap && opsCap.trace.some((t) => t.rule_id === "running-is-not-draining") && (
         <div className="heuristic-callout">
-          <div className="heuristic-label">Key Expert Heuristic</div>
+          <div className="heuristic-label">The expert's <Term k="heuristic">rule of thumb</Term></div>
           <div className="heuristic-text">
             &ldquo;A running pump indication does not prove effective drainage.&rdquo;
           </div>
@@ -429,24 +446,27 @@ function RecommendationDetail({
 
       {/* Cross-domain conflict card — most prominent element after the summary */}
       {showConflict && (
+        <>
+        <div className="conflict-head">Two pills looked at this situation and disagree — the safer one wins.</div>
         <div className="conflict-card">
           <div className="conflict-side conflict-side-proposes">
-            <div className="conflict-domain"><DomainIcon domain="Asset Operations" size={26} /> Asset Operations proposes</div>
-            <div className="conflict-action">Review access plan</div>
+            <div className="conflict-domain"><DomainIcon domain="Asset Operations" size={26} /> <span><Term k="asset-ops">Equipment</Term> pill suggests</span></div>
+            <div className="conflict-action">Plan another way in for tenants</div>
             <div className="conflict-reason">
-              The pill recommends reviewing the alternative access route to keep tenants safe.
+              The basement entrance may flood, so it suggests reviewing an alternative route.
             </div>
           </div>
           <div className="conflict-divider">→</div>
           <div className="conflict-side conflict-side-blocks">
-            <div className="conflict-domain"><DomainIcon domain="Tenant Experience" size={26} /> Tenant Experience blocks</div>
-            <div className="conflict-action">Access plan blocked</div>
+            <div className="conflict-domain"><DomainIcon domain="Tenant Experience" size={26} /> <span><Term k="tenant">Tenant-safety</Term> pill says: not yet</span></div>
+            <div className="conflict-action">Plan on hold (<Term k="blocked">blocked</Term>)</div>
             <div className="conflict-reason">
-              The alternative route is unverified. Tenant Experience blocks the access plan until
-              it is confirmed safe.
+              Nobody has confirmed the other route is safe. Until someone checks it, tenants
+              must not be sent that way.
             </div>
           </div>
         </div>
+        </>
       )}
 
       {/* Escalation outcome — who must act */}
@@ -491,13 +511,13 @@ function RecommendationDetail({
       {/* Blocked actions */}
       {result.blocked_actions.length > 0 && (
         <div className="callout callout-danger">
-          <strong>Blocked actions:</strong>{" "}
+          <strong><Term k="blocked">Blocked</Term> for now:</strong>{" "}
           {result.blocked_actions.map(actionLabel).join(", ")}
         </div>
       )}
 
       {/* Collapsible: Evidence — Observations */}
-      <Collapsible title="Evidence — Verified Observations" meta={`${Object.keys(observations).length} observations`} defaultOpen={governanceExpanded}>
+      <Collapsible title={<>Readings used <Term k="observation" tag>evidence</Term></>} hint="What the pills were told about the situation — value, source and time." meta={`${Object.keys(observations).length} observations`} defaultOpen={governanceExpanded}>
         <div className="obs-grid">
           {Object.entries(observations).map(([key, obs]) => (
             <div key={key} className="obs-tile">
@@ -515,7 +535,7 @@ function RecommendationDetail({
       </Collapsible>
 
       {/* Collapsible: Rule Trace */}
-      <Collapsible title="Rule Trace — Why This Fired" meta={`${capabilities.reduce((n, c) => n + c.trace.length, 0)} rules fired`} defaultOpen={governanceExpanded}>
+      <Collapsible title={<>Why this recommendation <Term k="rule-trace" tag>rule trace</Term></>} hint="Each expert rule that matched, and the reading that set it off." meta={`${capabilities.reduce((n, c) => n + c.trace.length, 0)} rules fired`} defaultOpen={governanceExpanded}>
         {capabilities.map((cap) => (
           <div key={cap.pill_id} className="mb-16">
             <div className="flex-between mb-8">
@@ -577,7 +597,7 @@ function RecommendationDetail({
       </Collapsible>
 
       {/* Collapsible: Pill Provenance */}
-      <Collapsible title="Pill Provenance — Exact Versions & Hashes" meta={`${capabilities.length} capabilities`} defaultOpen={governanceExpanded}>
+      <Collapsible title={<>Which knowledge was used <Term k="provenance" tag>provenance</Term></>} hint="The exact approved pill versions, and who wrote, reviewed and approved them." meta={`${capabilities.length} pills`} defaultOpen={governanceExpanded}>
         {capabilities.map((cap) => {
           const pill = cap.pill_id === OPS_ID ? opsPill : cap.pill_id === TENANT_ID ? tenantPill : undefined;
           return (
@@ -594,15 +614,15 @@ function RecommendationDetail({
                 <div><dt>Domain</dt><dd>{cap.domain}</dd></div>
                 {pill && (
                   <>
-                    <div><dt>Owner</dt><dd>{pill.owner}</dd></div>
-                    <div><dt>Reviewers</dt><dd>{pill.reviewers.join(", ")}</dd></div>
-                    <div><dt>Author</dt><dd>{pill.author}</dd></div>
+                    <div><dt>Owner</dt><dd>{persona(pill.owner).name}</dd></div>
+                    <div><dt>Reviewers</dt><dd>{pill.reviewers.map((r) => persona(r).name).join(", ")}</dd></div>
+                    <div><dt>Author</dt><dd>{persona(pill.author).name}</dd></div>
                     <div><dt>Change Reason</dt><dd>{pill.change_reason}</dd></div>
                   </>
                 )}
               </div>
               <div className="mt-8 kv kv-tech">
-                <div><dt>Content Hash</dt><dd>{cap.content_hash}</dd></div>
+                <div><dt><Term k="hash">Content fingerprint</Term></dt><dd>{cap.content_hash}</dd></div>
                 {pill && (
                   <div><dt>Created</dt><dd>{pill.created_at.slice(0, 19).replace("T", " ")} UTC</dd></div>
                 )}
@@ -613,7 +633,7 @@ function RecommendationDetail({
       </Collapsible>
 
       {/* Collapsible: Boundaries */}
-      <Collapsible title="Boundaries — Prohibited Actions & Guardrails" defaultOpen={governanceExpanded}>
+      <Collapsible title={<>What the system will never do <Term k="boundaries" tag>boundaries</Term></>} hint="Hard limits that apply whatever the readings say." defaultOpen={governanceExpanded}>
         {capabilities.map((cap) => (
           <div key={cap.pill_id} className="mb-16">
             <div className="pill-prov-name mb-8">{pillLabel(cap.pill_id)}</div>
@@ -828,11 +848,13 @@ function HumanDecisionArea({
 
 function Collapsible({
   title,
+  hint,
   meta,
   defaultOpen = false,
   children,
 }: {
-  title: string;
+  title: React.ReactNode;
+  hint?: string;
   meta?: string;
   defaultOpen?: boolean;
   children: React.ReactNode;
@@ -841,7 +863,7 @@ function Collapsible({
   return (
     <div className={`collapsible ${open ? "open" : ""}`}>
       <div className="collapsible-trigger" onClick={() => setOpen(!open)}>
-        <span>{title}</span>
+        <span className="coll-title"><span className="coll-title-main">{title}</span>{hint && <span className="coll-hint">{hint}</span>}</span>
         <div className="flex gap-16" style={{ alignItems: "center" }}>
           {meta && <span className="text-muted text-sm">{meta}</span>}
           <span className="collapsible-chevron">▼</span>

@@ -5,6 +5,7 @@ import { LiveCase } from "./components/LiveCase";
 import { IntelligencePills } from "./components/IntelligencePills";
 import { KnowledgeEvolution } from "./components/KnowledgeEvolution";
 import { Home } from "./components/Home";
+import { PERSONAS } from "./lib/glossary";
 import { HowItWorks } from "./components/HowItWorks";
 
 type View = "home" | "how" | "operational" | "pills" | "evolution";
@@ -103,11 +104,11 @@ export default function App() {
             value={role}
             onChange={(e) => handleRoleChange(e.target.value)}
           >
-            <option value="viewer">Viewer</option>
-            <option value="operator">Operator</option>
-            <option value="expert">Expert</option>
-            <option value="reviewer">Reviewer</option>
-            <option value="approver">Approver</option>
+            <option value="viewer">Viewer · Guest</option>
+            <option value="operator">Operator · {PERSONAS.operator.name}</option>
+            <option value="expert">Expert · {PERSONAS.expert.name}</option>
+            <option value="reviewer">Reviewer · {PERSONAS.reviewer.name}</option>
+            <option value="approver">Approver · {PERSONAS.approver.name}</option>
           </select>
         </div>
       </header>
@@ -171,7 +172,7 @@ export default function App() {
           {view === "home" && (
             <Home
               key={`home-${role}`}
-              onGoToHowItWorks={() => setView("how")}
+              onGoToHowItWorks={(section?: string) => { setView("how"); if (section) setTimeout(() => document.getElementById(section)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}
               onGoToLiveCase={() => setView("operational")}
               onGoToEvolution={(recId?: string) => {
                 setEvolutionRecId(recId ?? null);

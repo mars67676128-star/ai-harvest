@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, Fragment } from "react";
 import type { PillVersion, Status } from "../types";
 import { downloadPillJson, printPillSheet } from "../lib/pillExport";
 import { DomainIcon } from "./DomainIcon";
+import { Term, Avatar } from "./Term";
+import { persona } from "../lib/glossary";
 import {
   getPills,
   getPillVersions,
@@ -379,7 +381,7 @@ function PillRegistry({
                     <td>{p.content.domain}</td>
                     <td><span className="code-inline">v{p.version}</span></td>
                     <td><span className={statusBadgeClass(p.status)}>{STATUS_LABELS[p.status]}</span></td>
-                    <td>{p.owner}</td>
+                    <td>{persona(p.owner).name}</td>
                   </tr>
                   {draft && (
                     <tr
@@ -392,7 +394,7 @@ function PillRegistry({
                       <td />
                       <td><span className="code-inline">v{draft.version.version}</span></td>
                       <td><span className={statusBadgeClass(draft.version.status)}>{STATUS_LABELS[draft.version.status]}</span></td>
-                      <td>{draft.version.author}</td>
+                      <td>{persona(draft.version.author).name}</td>
                     </tr>
                   )}
                 </Fragment>
@@ -421,6 +423,7 @@ function PillHeader({ pill }: { pill: PillVersion }) {
               <div className="text-muted" style={{ marginTop: 2, fontSize: 14 }}>
                 {pill.content.description}
               </div>
+              <PillByline pill={pill} />
             </div>
           </div>
           <div className="flex gap-8 flex-wrap" style={{ alignItems: "center" }}>
@@ -443,6 +446,31 @@ function PillHeader({ pill }: { pill: PillVersion }) {
   );
 }
 
+// --- Byline: where this knowledge came from and who signed it off (Guru-style trust line) ---
+
+function PillByline({ pill }: { pill: PillVersion }) {
+  const interview = pill.content.evidence.find((e) => e.kind === "expert_interview");
+  const fromFeedback = pill.content.evidence.some((e) => e.kind === "feedback");
+  const author = persona(pill.author);
+  const reviewer = persona(pill.reviewers[0]);
+  const owner = persona(pill.owner);
+  const current = pill.status === "APPROVED";
+  return (
+    <div className="pill-byline">
+      <span className="byline-item">
+        <Avatar actor={pill.author} size={22} />
+        {interview ? <>Captured from an <Term k="evidence">interview</Term> with <b>{author.name}</b></> : <>Written by <b>{author.name}</b></>}
+        {fromFeedback && <> · updated from operator feedback</>}
+      </span>
+      <span className="byline-item"><Avatar actor={pill.reviewers[0] ?? "reviewer"} size={22} /><Term k="review">Reviewed</Term> by <b>{reviewer.name}</b></span>
+      <span className="byline-item"><Avatar actor={pill.owner} size={22} />Owned by <b>{owner.name}</b></span>
+      <span className={`byline-trust ${current ? "ok" : ""}`}>
+        {current ? "✓ Current approved version" : pill.status === "SUPERSEDED" ? "Replaced by a newer version" : "Not in use"}
+      </span>
+    </div>
+  );
+}
+
 // --- Key heuristic quote ---
 
 function KeyHeuristicQuote({ pill }: { pill: PillVersion }) {
@@ -452,7 +480,7 @@ function KeyHeuristicQuote({ pill }: { pill: PillVersion }) {
   if (!heuristic) return null;
   return (
     <div className="heuristic-callout">
-      <div className="heuristic-label">Key Expert Heuristic</div>
+      <div className="heuristic-label">The expert's <Term k="heuristic">rule of thumb</Term></div>
       <div className="heuristic-text">&ldquo;{heuristic}&rdquo;</div>
       <div className="text-muted text-sm mt-8">
         — {pill.content.name} v{pill.version}
@@ -465,11 +493,13 @@ function KeyHeuristicQuote({ pill }: { pill: PillVersion }) {
 
 function Collapsible({
   title,
+  hint,
   meta,
   defaultOpen = false,
   children,
 }: {
-  title: string;
+  title: React.ReactNode;
+  hint?: string;
   meta?: string;
   defaultOpen?: boolean;
   children: React.ReactNode;
@@ -478,7 +508,7 @@ function Collapsible({
   return (
     <div className={`collapsible ${open ? "open" : ""}`} style={{ marginBottom: 24 }}>
       <div className="collapsible-trigger" onClick={() => setOpen(!open)}>
-        <span>{title}</span>
+        <span className="coll-title"><span className="coll-title-main">{title}</span>{hint && <span className="coll-hint">{hint}</span>}</span>
         <div className="flex gap-16" style={{ alignItems: "center" }}>
           {meta && (
             <span className="badge badge-neutral">{meta}</span>
@@ -514,7 +544,7 @@ function GovernanceLifecycle({
   );
 
   return (
-    <Collapsible title="Governance Lifecycle" meta={`Draft → In Review → Approved`} defaultOpen={defaultOpen}>
+    <Collapsible title="Sign-off history" hint="Who reviewed, tested and approved this version — and when." meta={`Draft → In Review → Approved`} defaultOpen={defaultOpen}>
       {/* Lifecycle stepper */}
       <div className="lifecycle-stepper">
         {LIFECYCLE_STEPS.map((step, i) => {
@@ -661,9 +691,9 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
   const { scope, inputs, facts, expert_observations, assumptions, exceptions, rules, actions, prohibited_actions, guardrails, dependencies } = content;
 
   return (
-    <Collapsible title="Capability Definition" meta={`${rules.length} rules · ${actions.length} actions`} defaultOpen={defaultOpen}>
+    <Collapsible title="What this pill checks and recommends" hint="When it applies, which readings it needs, and its rules." meta={`${rules.length} rules · ${actions.length} actions`} defaultOpen={defaultOpen}>
       {/* Applicability / Scope */}
-      <div className="section-heading">Applicability & Scope</div>
+      <div className="section-heading">When this applies</div>
       <div className="scope-chips mb-16">
         {scope.asset_types.map((t, i) => <span key={`at-${i}`} className="scope-chip">{t}</span>)}
         {scope.equipment.map((e, i) => <span key={`eq-${i}`} className="scope-chip">{e}</span>)}
@@ -675,7 +705,7 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
       <div className="section-divider" />
 
       {/* Required Inputs */}
-      <div className="section-heading">Required Inputs</div>
+      <div className="section-heading">Readings it needs</div>
       <div className="obs-grid mb-16">
         {inputs.map((inp) => (
           <div key={inp.key} className="input-card">
@@ -697,7 +727,7 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
       {/* Expert Facts & Heuristics */}
       {(facts.length > 0 || expert_observations.length > 0 || assumptions.length > 0 || exceptions.length > 0) && (
         <>
-          <div className="section-heading">Expert Facts & Heuristics</div>
+          <div className="section-heading">What the expert knows</div>
           <div className="mb-16">
             {facts.length > 0 && (
               <div className="mb-16">
@@ -745,7 +775,7 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
       )}
 
       {/* Deterministic Rules */}
-      <div className="section-heading">Deterministic Rules</div>
+      <div className="section-heading">Rules (checked the same way every time)</div>
       <div className="mb-16">
         {rules.map((r, i) => (
           <div key={i} className={`rule-card ${r.category}`}>
@@ -809,7 +839,7 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
       {/* Guardrails */}
       {guardrails.length > 0 && (
         <>
-          <div className="section-heading">Guardrails</div>
+          <div className="section-heading">Safety limits</div>
           <ul className="boundary-list mb-16">
             {guardrails.map((g, i) => (
               <li key={i}><span className="boundary-icon" style={{ color: "var(--warning)" }}>!</span><span>{g}</span></li>
@@ -822,7 +852,7 @@ function CapabilityDefinition({ pill, defaultOpen }: { pill: PillVersion; defaul
       {/* Prohibited Actions */}
       {prohibited_actions.length > 0 && (
         <>
-          <div className="section-heading">Prohibited Actions</div>
+          <div className="section-heading">Never allowed</div>
           <ul className="boundary-list mb-16">
             {prohibited_actions.map((p, i) => (
               <li key={i}><span className="boundary-icon">×</span><span>{actionLabel(p)}</span></li>
@@ -871,7 +901,7 @@ function EvidenceProvenance({ pill, defaultOpen }: { pill: PillVersion; defaultO
   const { evidence } = pill.content;
 
   return (
-    <Collapsible title="Evidence & Provenance" meta={`${evidence.length} items`} defaultOpen={defaultOpen}>
+    <Collapsible title={<>Where this knowledge came from <Term k="evidence" tag>evidence</Term></>} hint="The interviews, incidents and feedback behind the rules." meta={`${evidence.length} items`} defaultOpen={defaultOpen}>
       <div className="obs-grid">
         {evidence.map((e) => (
           <div key={e.id} className="input-card">
@@ -946,7 +976,7 @@ function ValidationObligations({ pill, defaultOpen }: { pill: PillVersion; defau
     : null;
 
   return (
-    <Collapsible title="Regression / Validation Obligations" meta={`${evaluation.length} cases`} defaultOpen={defaultOpen}>
+    <Collapsible title={<>Test situations it must pass <Term k="regression" tag>regression tests</Term></>} hint="Saved examples with the answer the pill must give. Every new version must still pass all of them." meta={`${evaluation.length} cases`} defaultOpen={defaultOpen}>
       {(() => {
         // Build titles and detect collisions for uniqueness
         const rawTitles = evaluation.map((tc) => buildRegressionTitle(tc));
@@ -1013,7 +1043,7 @@ function VersionLineage({
   defaultOpen: boolean;
 }) {
   return (
-    <Collapsible title="Version Lineage" meta={`${versions.length} version${versions.length !== 1 ? "s" : ""}`} defaultOpen={defaultOpen}>
+    <Collapsible title="Version history" hint="Every version ever made. Only one is current at a time." meta={`${versions.length} version${versions.length !== 1 ? "s" : ""}`} defaultOpen={defaultOpen}>
       {versions.length <= 1 ? (
         <div className="text-muted text-sm">
           Only <strong>v{currentVersion}</strong> exists at this point. No previous or successor versions have been published.

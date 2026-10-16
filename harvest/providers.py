@@ -9,6 +9,7 @@ import httpx
 from pydantic import BaseModel
 
 from .config import Settings
+from .demo_corrections import BACKFLOW_REVISED_TEXT
 from .errors import DomainError
 from .fixtures import (
     BACKFLOW_TEXT,
@@ -56,13 +57,14 @@ class MockProvider:
                 "content": content.model_dump(mode="json"),
             }
         elif operation == "revise":
-            if payload["feedback"]["correction"] != BACKFLOW_TEXT or any(
+            accepted_corrections = {BACKFLOW_TEXT, BACKFLOW_REVISED_TEXT}
+            if payload["feedback"]["correction"] not in accepted_corrections or any(
                 i["key"] == "drain_backflow" for i in payload["current"]["inputs"]
             ):
                 raise DomainError(
                     422,
                     "MOCK_FIXTURE_ONLY",
-                    "Offline revision supports only the labelled demo backflow correction once.",
+                    "Offline revision supports only the labelled synthetic backflow corrections against the original approved demo Pill.",
                 )
             data = revised_operations(payload["current"]).model_dump(mode="json")
         elif operation == "explain":

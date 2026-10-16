@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { friendlyError } from "../lib/friendlyError";
+import { DemoHint } from "./WorkflowBits";
 import type { Observation, PillVersion, RecommendationRecord } from "../types";
 import {
   createCase,
@@ -88,6 +89,20 @@ export function LiveCase({
   const [selectedRec, setSelectedRec] = useState<RecommendationRecord | null>(null);
   const [exactPills, setExactPills] = useState<Record<string, PillVersion>>({});
   const [scenario, setScenario] = useState<Scenario>("rising");
+  const [summaryPending, setSummaryPending] = useState<string | null>(null);
+  const summaryRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!summaryPending) return;
+    const el = summaryRef.current;
+    let timer: number | undefined;
+    const finish = () => { timer = window.setTimeout(() => setSummaryPending(null), 2500); };
+    if (!el || typeof IntersectionObserver === "undefined") { finish(); return () => window.clearTimeout(timer); }
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) { io.disconnect(); finish(); }
+    }, { threshold: 0.6 });
+    io.observe(el);
+    return () => { io.disconnect(); window.clearTimeout(timer); };
+  }, [summaryPending, selectedRec]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -167,6 +182,8 @@ export function LiveCase({
       setActiveRec(rec.id);
       setRecommendations((prev) => [...prev, rec]);
       setSelectedRec(rec);
+      // The summary is written when the operator scrolls to it (see effect below).
+      setSummaryPending(rec.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -207,8 +224,8 @@ export function LiveCase({
   if (role !== "operator" && role !== "approver") {
     return (
       <div className="callout callout-info">
-        <strong>Live Case is role-restricted.</strong> Operator can run assessments and record decisions;
-        Approver can inspect operational recommendations. Switch role in the top-right corner to continue.
+        Live cases are handled by the operator on duty and visible to approvers.
+        <div className="mt-8"><DemoHint>Switch to Operator or Approver at top right.</DemoHint></div>
       </div>
     );
   }
@@ -241,7 +258,6 @@ export function LiveCase({
 
       <div className="scenario-context">
         <b>The situation.</b> Harbour Exchange is fictional. During heavy rain, the basement sump should drain water away.
-        The demo tests whether approved expert knowledge catches contradictions that a green status indicator can hide.
       </div>
 
       <div className="card mb-16">
@@ -261,19 +277,12 @@ export function LiveCase({
                 {busy ? "Running…" : "Run Operational Assessment"}
               </button>
             ) : (
-              <div className="callout callout-info">
-                Approver is read-only here. Switch to <strong>Operator</strong> to run a new assessment.
-              </div>
+              <DemoHint>Assessments are run by the operator on duty — switch to Operator at top right.</DemoHint>
             )}
           </div>
         </div>
       </div>
 
-      <div className="plain-english">
-        {scenario === "backflow"
-          ? "This tests the learned backflow exception: the water trend looks flat, but verified drain backflow means routine monitoring alone is unsafe."
-          : "The pump reports RUNNING while water is rising. Sifu treats the contradiction as the meaningful signal and escalates; Tenant Experience independently blocks an unverified access plan."}
-      </div>
 
       <div className="tile-grid" style={{ marginBottom: 20 }}>
         {Object.entries(shownObs).filter(([key]) => ["pump_running", "water_rise_mm_min", "alternative_route_verified", "critical_equipment_exposed", "drain_backflow"].includes(key)).map(([key, value]) => (
@@ -289,14 +298,14 @@ export function LiveCase({
 
       {!selectedRec && (
         <div className="callout callout-info">
-          No recommendation is selected yet. {role === "operator" ? "Run the assessment to create one." : "Switch to Operator to create the first assessment."}
+          No recommendation is selected yet. {role === "operator" ? "Run the assessment to create one." : "Assessments are run by the operator on duty."}
         </div>
       )}
 
       {selectedRec && (
         <>
           <div className="source-attribution">
-            <span className="source-label">Exact capability snapshot used:</span>
+            <span className="source-label">Based on approved pills:</span>
             {selectedRec.capabilities.map((cap) => (
               <span key={cap.pill_id} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
                 <span className="pill-link" onClick={() => onGoToPill?.(cap.pill_id)}>
@@ -309,7 +318,7 @@ export function LiveCase({
 
           <div className={selectedRec.result.decision === "ESCALATE" ? "callout callout-warning mb-16" : "callout callout-info mb-16"}>
             <strong>{selectedRec.result.decision === "HUMAN_REVIEW" ? "Needs review" : humanise(selectedRec.result.decision)}</strong>
-            {" · "}execution_allowed = {String(selectedRec.result.execution_allowed)}
+            {" · "}Advice only
             <br />{selectedRec.result.human_responsibility}
           </div>
 
@@ -324,7 +333,7 @@ export function LiveCase({
               <div className="conflict-side conflict-side-blocks">
                 <div className="conflict-domain">Tenant Experience blocks</div>
                 <div className="conflict-action">Alternative route unverified</div>
-                <div className="conflict-reason">The cross-domain guardrail prevents an unsafe shortcut.</div>
+                <div className="conflict-reason">Blocked until the other route is checked safe.</div>
               </div>
             </div>
           )}
@@ -350,7 +359,7 @@ export function LiveCase({
           )}
 
           <div className="card mb-16">
-            <div className="card-header"><span className="card-title">Rule Trace — Why This Fired</span></div>
+            <div className="card-header"><span className="card-title">Why this recommendation</span></div>
             <div className="card-body">
               {selectedRec.capabilities.map((cap) => (
                 <div key={cap.pill_id} className="mb-16">
@@ -367,7 +376,7 @@ export function LiveCase({
           </div>
 
           <div className="card mb-16">
-            <div className="card-header"><span className="card-title">Exact Pill Provenance</span><span className="card-meta">historical metadata is fetched by exact version</span></div>
+            <div className="card-header"><span className="card-title">Pill versions used</span></div>
             <div className="card-body">
               {selectedRec.capabilities.map((cap) => {
                 const pill = exactPills[cap.pill_id];
@@ -388,7 +397,6 @@ export function LiveCase({
             <div className="card-header"><span className="card-title">Boundaries</span></div>
             <div className="card-body">
               {selectedRec.capabilities.map((cap) => <div key={cap.pill_id} className="mb-16"><div className="pill-prov-name mb-8">{exactPills[cap.pill_id]?.content.name ?? cap.pill_id}</div><ul className="boundary-list">{cap.boundaries.map((b) => <li key={b}><span className="boundary-icon">×</span><span>{b}</span></li>)}</ul></div>)}
-              <div className="callout callout-info"><strong>execution_allowed = false</strong> — no equipment control, access changes, tenant messaging or knowledge release is authorised.</div>
             </div>
           </div>
 
@@ -398,11 +406,11 @@ export function LiveCase({
               {selectedRec.human_decision ? (
                 <>
                   <div className="confirmation-banner"><span className="confirmation-text">Escalation recorded.</span>{onGoToEvolution && <span className="next-step-link" onClick={() => onGoToEvolution(selectedRec.id)}>Next: record the outcome →</span>}</div>
-                  <div className="kv"><div><dt>Decision</dt><dd>{humanise(selectedRec.human_decision.decision)}</dd></div><div><dt>Accountable actor</dt><dd>{humanise(selectedRec.human_decision.actor)}</dd></div><div><dt>Note</dt><dd>{selectedRec.human_decision.note}</dd></div><div><dt>Execution allowed</dt><dd>{String(selectedRec.human_decision.execution_allowed)}</dd></div></div>
+                  <div className="kv"><div><dt>Decision</dt><dd>{humanise(selectedRec.human_decision.decision)}</dd></div><div><dt>Accountable actor</dt><dd>{humanise(selectedRec.human_decision.actor)}</dd></div><div><dt>Note</dt><dd>{selectedRec.human_decision.note}</dd></div></div>
                 </>
               ) : selectedRec.result.decision === "ESCALATE" ? (
                 <>
-                  {role !== "operator" && <div className="callout callout-warning mb-16">Operator role is required to record the escalation. Approver may inspect but cannot act.</div>}
+                  {role !== "operator" && <div className="callout callout-warning mb-16">Only the operator on duty records the decision.</div>}
                   <textarea className="note-input mb-8" rows={3} value={note} onChange={(e) => setNote(e.target.value)} disabled={busy || role !== "operator"} />
                   <button className="btn btn-primary" onClick={handleEscalation} disabled={busy || role !== "operator" || !note.trim()}>{busy ? "Recording…" : "Record Escalation"}</button>
                 </>
@@ -411,9 +419,23 @@ export function LiveCase({
           </div>
 
           {selectedRec.ai_explanation && (
-            <div className="ai-explanation-box">
-              <div className="card-header"><span className="card-title">AI Explanation — not authoritative</span><span className="badge badge-neutral">Advisory only</span></div>
-              <div className="card-body"><div>{selectedRec.ai_explanation.summary}</div><div className="text-muted mt-8">Uncertainty: {selectedRec.ai_explanation.uncertainty}</div></div>
+            <div className="ai-summary" ref={summaryRef}>
+              <div className="ai-summary-head">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.8 5.4L19 9l-5.2 1.6L12 16l-1.8-5.4L5 9l5.2-1.6z" /><path d="M19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9z" /></svg>
+                <span>Summary</span><span className="ai-tag">AI-generated</span>
+              </div>
+              {summaryPending === selectedRec.id ? (
+                <div className="ai-skeleton" aria-label="Writing summary">
+                  <div className="ai-writing">Writing summary…</div>
+                  <span /><span /><span />
+                </div>
+              ) : (
+                <>
+                  <p className="ai-summary-text">{selectedRec.ai_explanation.summary}</p>
+                  <p className="ai-summary-unc">{selectedRec.ai_explanation.uncertainty}</p>
+                </>
+              )}
+              <div className="ai-summary-foot">Advisory only · AI summaries can be wrong</div>
             </div>
           )}
         </>

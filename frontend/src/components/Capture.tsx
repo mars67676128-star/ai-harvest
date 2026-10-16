@@ -97,7 +97,6 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
       {/* 1. Questions */}
       <section className="cap-section">
         <h2 className="cap-h"><span className="how-n">1</span> The guided interview — 7 questions</h2>
-        <p className="text-dim mb-16">Each question targets a kind of knowledge that manuals usually miss.</p>
         <ol className="q-list">
           {(questions.length ? questions : Object.keys(TECHNIQUE_PLAIN).map((t) => ({ technique: t, question: "" }))).map((q, i) => {
             const plain = TECHNIQUE_PLAIN[q.technique];
@@ -107,7 +106,6 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
                 <div>
                   <div className="q-label">{plain?.label ?? q.technique}</div>
                   {q.question && <div className="q-text">“{q.question}”</div>}
-                  {plain && <div className="q-why">{plain.why}</div>}
                 </div>
               </li>
             );
@@ -206,7 +204,7 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
             <div className="draft-block">
               <div className="section-heading">Questions still open</div>
               {[...c.unresolved_questions, ...draft.elicitation_gaps].length === 0
-                ? <p className="text-muted text-sm">None flagged by the AI — the reviewer still checks every rule. Any open question would block release.</p>
+                ? <p className="text-muted text-sm">None flagged.</p>
                 : <ul className="plain-list">{[...c.unresolved_questions, ...draft.elicitation_gaps].map((q) => <li key={q}>{q}</li>)}</ul>}
             </div>
           </div>
@@ -215,13 +213,7 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
 
       {/* 4. Next */}
       <section className="cap-section">
-        <h2 className="cap-h"><span className="how-n">{draft ? 4 : 3}</span> What happens next</h2>
-        <ol className="next-steps">
-          <li><b>{tan.name}</b> checks the draft against his own experience and corrects it.</li>
-          <li>It becomes a pill, <b>version 1.0.0</b>, still a draft — it advises nobody yet.</li>
-          <li><b>{persona("reviewer").name}</b> reviews it independently and runs its <Term k="regression">test situations</Term>.</li>
-          <li><b>{persona("approver").name}</b> approves it. Only now can the duty team use it on a <Term k="case">live case</Term>.</li>
-        </ol>
+        <p className="text-dim">Next: <b>{tan.name}</b> checks the draft and submits it for review.</p>
         <div className="how-teaser">
           In this demo, this interview already became <a onClick={() => onGoToPill(PILL_FOR_DOMAIN[interview.domain])}>
             {interview.domain === "Asset Operations" ? "Monsoon near-miss triage" : "Tenant incident continuity"} →</a>

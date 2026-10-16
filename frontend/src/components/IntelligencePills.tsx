@@ -439,7 +439,6 @@ function PillHeader({ pill }: { pill: PillVersion }) {
           <button className="btn btn-quiet" onClick={() => downloadPillJson(pill)}>
             Export portable JSON
           </button>
-          <span className="text-muted text-sm">Owned by the organisation · independent of any AI vendor</span>
         </div>
       </div>
     </div>
@@ -923,9 +922,7 @@ function EvidenceProvenance({ pill, defaultOpen }: { pill: PillVersion; defaultO
         ))}
       </div>
       <div className="callout callout-info mt-16">
-        <strong>Provenance distinction:</strong> Synthetic evidence is a demo fixture, not a
-        real expert interview. Public-context evidence provides background only and does not
-        validate the Pill's rules.
+Demo data: synthetic interview.
       </div>
     </Collapsible>
   );
@@ -976,7 +973,7 @@ function ValidationObligations({ pill, defaultOpen }: { pill: PillVersion; defau
     : null;
 
   return (
-    <Collapsible title={<>Test situations it must pass <Term k="regression" tag>regression tests</Term></>} hint="Saved examples with the answer the pill must give. Every new version must still pass all of them." meta={`${evaluation.length} cases`} defaultOpen={defaultOpen}>
+    <Collapsible title={<>Test situations it must pass <Term k="regression" tag>regression tests</Term></>} hint="Saved examples with the answer the pill must give." meta={`${evaluation.length} cases`} defaultOpen={defaultOpen}>
       {(() => {
         // Build titles and detect collisions for uniqueness
         const rawTitles = evaluation.map((tc) => buildRegressionTitle(tc));
@@ -1023,10 +1020,7 @@ function ValidationObligations({ pill, defaultOpen }: { pill: PillVersion; defau
         );
       });
       })()}
-      <div className="callout callout-info mt-16">
-        Approved regression obligations are inherited by successor versions and cannot be
-        silently removed or weakened.
-      </div>
+      
     </Collapsible>
   );
 }
@@ -1043,7 +1037,7 @@ function VersionLineage({
   defaultOpen: boolean;
 }) {
   return (
-    <Collapsible title="Version history" hint="Every version ever made. Only one is current at a time." meta={`${versions.length} version${versions.length !== 1 ? "s" : ""}`} defaultOpen={defaultOpen}>
+    <Collapsible title="Version history" hint="Every version ever made." meta={`${versions.length} version${versions.length !== 1 ? "s" : ""}`} defaultOpen={defaultOpen}>
       {versions.length <= 1 ? (
         <div className="text-muted text-sm">
           Only <strong>v{currentVersion}</strong> exists at this point. No previous or successor versions have been published.

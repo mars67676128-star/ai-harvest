@@ -70,9 +70,8 @@ export function ExactPillView({
       </div>
 
       {pill.status !== "APPROVED" && (
-        <div className="ai-proposal-banner mb-16">
-          <span className="banner-text">CANDIDATE VERSION — NOT PRODUCTION KNOWLEDGE.</span>
-          <span className="banner-sub">Opened exactly from the governance workflow; the approved release remains authoritative until approval.</span>
+        <div className="callout callout-warning mb-16">
+          <strong>Draft v{pill.version}, not in use.</strong> The approved version stays in use until this is approved.
         </div>
       )}
 

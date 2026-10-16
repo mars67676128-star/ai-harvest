@@ -24,13 +24,6 @@ interface Task {
   go: () => void;
 }
 
-const ROLE_INTRO: Record<string, string> = {
-  operator: "You run assessments on live situations, record escalations and report what actually happened.",
-  expert: "You own the knowledge. You review AI proposals and submit them for independent review.",
-  reviewer: "You independently review candidate knowledge and run the regression tests.",
-  approver: "You release approved knowledge into operations — or keep the current version active.",
-  viewer: "You can inspect Intelligence Pills and governance metadata. Operational recommendations remain role-restricted.",
-};
 
 
 function ago(iso: string) {
@@ -144,11 +137,11 @@ export function Home({ onGoToHowItWorks, onGoToLiveCase, onGoToEvolution, onGoTo
     for (const r of recs ?? []) {
       if (r.result.decision === "ESCALATE" && !r.human_decision && role === "operator") {
         tasks.push({ key: `dec-${r.id}`, tone: "warning", title: "Escalation awaiting your decision",
-          detail: `Assessment at ${r.created_at.slice(11, 16)} UTC — Sifu will not act on its own.`,
+          detail: `Assessment at ${r.created_at.slice(11, 16)} UTC.`,
           cta: "Open case", go: onGoToLiveCase });
       } else if (r.human_decision && !r.outcome && role === "operator") {
         tasks.push({ key: `out-${r.id}`, tone: "action", title: "Record what actually happened",
-          detail: `Escalation at ${r.created_at.slice(11, 16)} UTC has no outcome yet. Outcomes are how the system learns.`,
+          detail: `Escalation at ${r.created_at.slice(11, 16)} UTC has no outcome yet.`,
           cta: "Record outcome", go: () => goRec(r.id) });
       } else if (r.outcome && role === "operator") {
         const fbs = getFeedbackIds(r.id);
@@ -233,7 +226,6 @@ export function Home({ onGoToHowItWorks, onGoToLiveCase, onGoToEvolution, onGoTo
         <h1 className="home-title">{role === "viewer" ? "Welcome" : `${greeting()}, ${me.name.split(" ")[0]}`}</h1>
         <p className="home-sub">
           <span className="home-me"><Avatar actor={role} size={22} /> {me.name} · {me.title} <span className="text-muted">(demo persona)</span></span>
-          {ROLE_INTRO[role] ?? ROLE_INTRO.viewer}
         </p>
 
         <div className="kb-search">
@@ -352,7 +344,7 @@ export function Home({ onGoToHowItWorks, onGoToLiveCase, onGoToEvolution, onGoTo
               ))}
             </ul>
           )}
-          {!audit && <div className="feed-note">Showing what your role can see. The full audit trail is limited to reviewers and approvers.</div>}
+          {!audit && <div className="feed-note">Showing activity visible to your role.</div>}
         </aside>
       </div>
       )}

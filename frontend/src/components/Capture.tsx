@@ -65,13 +65,18 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
   };
   const edited = transcript.trim() !== cleanText(DEMO_INTERVIEWS[which].transcript);
   const transcriptTooShort = transcript.trim().length < 30;
+  // A capture is synthetic only when the transcript exactly matches one of the
+  // two loaded demo fixture interviews (unmodified). Free-form user text is real.
+  const isDemoFixture = DEMO_INTERVIEWS.some(
+    (d) => transcript.trim() === cleanText(d.transcript)
+  );
 
   const run = async () => {
     setBusy(true);
     setError(null);
     setDraft(null);
     try {
-      const cap = await createCapture({ title, transcript, domain: domain as never, synthetic: true });
+      const cap = await createCapture({ title, transcript, domain: domain as never, synthetic: isDemoFixture });
       const started = Date.now();
       const ex = await extractCapture(cap.id);
       const wait = 2800 - (Date.now() - started);

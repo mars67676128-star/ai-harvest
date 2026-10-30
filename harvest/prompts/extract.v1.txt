@@ -10,6 +10,34 @@ Include executable evaluations with exact expected action sets, escalation, miss
 Any knowledge gap necessary for safe use must be listed in unresolved_questions; do not conceal it to pass tests.
 This extraction does not make the material authoritative. A qualified independent reviewer validates it.
 
+CRITICAL — DO NOT FABRICATE KNOWLEDGE:
+  Never invent operational facts, thresholds, escalation roles, evidence, rules, or evaluation cases
+  merely to satisfy schema completeness. Every field you populate must be directly supported by the
+  interview text. If the interview does not mention a pressure threshold, do not invent one. If it does
+  not name an escalation contact, do not invent a role title.
+
+  Knowledge that the interview hints at but does not fully specify should be represented in
+  elicitation_gaps and unresolved_questions — not fabricated into rules, inputs, or actions.
+
+  Fields that permit empty arrays in the schema (facts, unresolved_questions, contradictions,
+  dependencies) should remain empty arrays when the interview does not support any entries.
+
+  Fields that the schema requires to be non-empty (expert_observations, assumptions, exceptions,
+  actions, prohibited_actions, guardrails, rules, evidence, inputs, evaluation) must contain only
+  content directly supported by the interview. If you cannot truthfully populate a schema-required
+  field from the interview, do NOT pad it with invented content — instead, note what is missing in
+  elicitation_gaps. The extraction will then fail schema validation safely rather than produce
+  fabricated knowledge. A safe failure is always preferable to a fabricated extraction.
+
+  Do NOT force an ESCALATE evaluation case unless the source interview genuinely describes an
+  escalation scenario. If the interview does not support any escalation, omit it. The schema
+  requires at least one ESCALATE evaluation; if the interview does not support one, the extraction
+  should fail validation rather than inventing a fake escalation.
+
+  Do NOT invent numeric thresholds, boolean conditions, or typed input values that the interview
+  does not provide. If the expert says "if pressure gets too high" without specifying a value,
+  that is an elicitation gap, not a rule with an invented threshold.
+
 Output structure guidance — the JSON object must contain exactly these top-level keys:
   summary (string, 1–4000 chars): one-sentence description of what was extracted.
   elicitation_gaps (array of strings): knowledge gaps that block safe use; empty array if none.
@@ -17,20 +45,32 @@ Output structure guidance — the JSON object must contain exactly these top-lev
 
 The content object must include all required PillContent fields. Pay special attention to:
   - scope: at least one entry in each of asset_types, equipment, contexts, prerequisites, exclusions.
-  - inputs: at least one typed input spec. Every input must have required: true, kind, max_age_seconds (1–86400), unit.
+    Populate these from what the interview actually describes. If the interview does not specify
+    exclusions or prerequisites, use the most defensible generic statement (e.g. "Unknown conditions
+    require qualified human assessment") rather than inventing specific technical exclusions.
+  - inputs: at least one typed input spec. Every input must have required: true, kind, max_age_seconds
+    (1–86400), unit. Only include inputs the interview references. Do not invent readings.
   - actions: at least one action with id, description, human_approval_required: true.
-  - rules: at least one rule. Each rule's when conditions must reference existing input keys with values matching the input kind.
-    Each rule must reference at least one evidence id that exists in the evidence array.
-    Ordered comparisons (gt/gte/lt/lte) require numeric inputs only.
+    Only include actions the interview supports.
+  - rules: at least one rule. Each rule's when conditions must reference existing input keys with
+    values matching the input kind. Each rule must reference at least one evidence id that exists
+    in the evidence array. Ordered comparisons (gt/gte/lt/lte) require numeric inputs only.
     Every rule must have at least one of: recommend, block, or escalate_to.
+    Do not invent rules the interview does not support.
   - evidence: at least one evidence entry with id, kind, citation, summary, synthetic.
-  - evaluation: at least two test cases. At least one must have expected_decision "ESCALATE".
-    Evaluation inputs must reference only existing input keys.
-  - prohibited_actions, guardrails, expert_observations, assumptions, exceptions: each must have at least one entry.
+  - evaluation: at least two test cases. At least one must have expected_decision "ESCALATE"
+    IF AND ONLY IF the interview supports an escalation scenario. Evaluation inputs must reference
+    only existing input keys.
+  - prohibited_actions, guardrails, expert_observations, assumptions, exceptions: each must have
+    at least one entry, drawn from the interview. If the interview genuinely provides no basis for
+    a field, use a truthful generic statement (e.g. "No exceptions were described in the interview")
+    rather than inventing technical details.
   - synthetic: true if the interview is synthetic/demo material; false otherwise.
   - domain: must match the domain in the capture request exactly.
   - All identifiers must match ^[a-z][a-z0-9_.-]{0,79}$.
   - No duplicate identifiers within inputs, actions, rules, evidence, or evaluation.
 
-If the interview lacks enough detail to produce safe, complete rules, list what is missing in elicitation_gaps
-and unresolved_questions rather than fabricating fields or evidence.
+If the interview lacks enough detail to produce safe, complete, truthfully-populated rules, list
+every missing element in elicitation_gaps and unresolved_questions. It is correct and expected
+that a sparse or vague interview will fail schema validation — this is the system refusing to
+fabricate knowledge, not a bug.

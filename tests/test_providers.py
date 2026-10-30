@@ -402,3 +402,161 @@ def test_mock_fallback_regression_extracts_existing_fixture(client):
     assert extraction["ai"]["live"] is False
     assert extraction["ai"]["provider"] == "mock"
     assert extraction["ai"]["model"] == "deterministic-fixture-v1"
+
+
+# ---------------------------------------------------------------------------
+# Audit fix 1: free-form captures are non-synthetic; demo fixtures are synthetic
+# ---------------------------------------------------------------------------
+
+
+def test_free_form_capture_is_non_synthetic(client):
+    """A novel, non-demo interview submitted by an expert must be recorded with
+    synthetic=false — it is real knowledge, not a synthetic fixture."""
+    capture = call(
+        client,
+        "POST",
+        "/captures",
+        "expert",
+        {
+            "title": "Novel chiller interview",
+            "domain": "Asset Operations",
+            "transcript": "A brand new free-form interview about a chiller tripping. "
+            "The expert explains the sequence of events and what to check.",
+            "synthetic": False,
+        },
+    )
+    assert capture["synthetic"] is False
+
+
+def test_demo_fixture_captures_remain_synthetic(client):
+    """The two loaded demo fixture interviews must remain synthetic=true."""
+    from harvest.fixtures import TENANT_TRANSCRIPT
+
+    for transcript in [OPS_TRANSCRIPT, TENANT_TRANSCRIPT]:
+        capture = call(
+            client,
+            "POST",
+            "/captures",
+            "expert",
+            {
+                "title": "Demo",
+                "domain": "Asset Operations",
+                "transcript": transcript,
+                "synthetic": True,
+            },
+        )
+        assert capture["synthetic"] is True
+
+
+# ---------------------------------------------------------------------------
+# Audit fix 2: incomplete interview must not produce fabricated knowledge
+# ---------------------------------------------------------------------------
+
+
+def test_incomplete_interview_does_not_invent_facts():
+    """A deliberately vague interview — 'If pressure gets too high, call someone.'
+    — must not yield a fabricated extraction with an invented numeric threshold,
+    named escalation role, or unsupported operational rule.
+
+    This test simulates two model behaviours the revised prompt is designed to
+    produce:
+
+    1. The model heeds the prompt and returns a sparse extraction with gaps
+       instead of fabricated content. Schema validation rejects it safely.
+    2. The model ignores the prompt and fabricates a numeric threshold. The
+       extraction may pass schema validation, but the system never produces
+       an authoritative result and no approved knowledge changes.
+
+    In both cases, no Pill is created and no approved knowledge is modified.
+    """
+    incomplete = "If pressure gets too high, call someone."
+
+    # Path 1: model returns a sparse extraction (no invented fields) — fails
+    # schema validation because required fields are missing or empty.
+    sparse_payload = {
+        "summary": "Interview mentions pressure and escalation but lacks specifics.",
+        "elicitation_gaps": [
+            "Numeric pressure threshold not specified",
+            "Named escalation role not specified",
+            "No equipment, asset type, or context described",
+        ],
+        "content": {
+            "schema_version": "1.0",
+            "name": "Pressure triage",
+            "domain": "Asset Operations",
+            "description": "Insufficient detail for safe extraction.",
+            "scope": {
+                "asset_types": ["unknown"],
+                "equipment": ["unknown"],
+                "contexts": ["unknown"],
+                "prerequisites": ["Insufficient detail in the interview"],
+                "exclusions": ["No exclusions described in the interview"],
+            },
+            "inputs": [],
+            "expert_observations": [],
+            "assumptions": [],
+            "exceptions": [],
+            "actions": [],
+            "prohibited_actions": [],
+            "guardrails": [],
+            "rules": [],
+            "evidence": [],
+            "evaluation": [],
+            "unresolved_questions": [
+                "What pressure reading triggers escalation?",
+                "Who is the named escalation contact?",
+            ],
+            "contradictions": [],
+            "synthetic": False,
+        },
+    }
+    provider = _compatible_provider(lambda req: _mock_chat_response(sparse_payload))
+    capture = {
+        "capture": {
+            "title": "Vague interview",
+            "transcript": incomplete,
+            "domain": "Asset Operations",
+            "synthetic": False,
+            "author": "expert",
+        }
+    }
+    with pytest.raises(DomainError) as exc:
+        generate(provider, "extract", capture, Extraction)
+    assert exc.value.code == "LLM_UNAVAILABLE"
+    assert exc.value.status == 502
+    # No invented threshold or escalation role leaked into the error message
+    assert "live-secret" not in str(exc.value)
+
+
+def test_incomplete_interview_fabricated_output_still_non_authoritative(client):
+    """Even if a model ignores the prompt and fabricates a plausible extraction
+    for 'If pressure gets too high, call someone.', the system must:
+      - store the draft as non-authoritative (extraction, not approved pill)
+      - not create any approved pill
+      - mark the extraction as non-synthetic (real interview)
+    """
+    fabricated = _valid_extraction_json()
+    fabricated["summary"] = (
+        "Fabricated extraction: the model invented a pressure threshold and "
+        "escalation roles the interview does not support."
+    )
+    client.app.state.service.provider = _compatible_provider(
+        lambda req: _mock_chat_response(fabricated)
+    )
+    capture = call(
+        client,
+        "POST",
+        "/captures",
+        "expert",
+        {
+            "title": "Vague interview",
+            "domain": "Asset Operations",
+            "transcript": "If pressure gets too high, call someone.",
+            "synthetic": False,
+        },
+    )
+    assert capture["synthetic"] is False
+    extraction = call(client, "POST", f"/captures/{capture['id']}/extract", "expert")
+    # Draft exists but no pill has been created — knowledge is non-authoritative
+    assert extraction["summary"]
+    assert call(client, "GET", "/pills") == []

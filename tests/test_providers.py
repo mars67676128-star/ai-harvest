@@ -560,3 +560,60 @@ def test_incomplete_interview_fabricated_output_still_non_authoritative(client):
     # Draft exists but no pill has been created — knowledge is non-authoritative
     assert extraction["summary"]
     assert call(client, "GET", "/pills") == []
+
+
+# ---------------------------------------------------------------------------
+# OpenAI max_completion_tokens compatibility patch
+# ---------------------------------------------------------------------------
+
+
+def test_openai_base_url_uses_max_completion_tokens():
+    """OpenAI models (e.g. gpt-6.1-terra) reject max_tokens. The provider must
+    send max_completion_tokens instead and must NOT send max_tokens."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request):
+        seen.append(request)
+        return _mock_chat_response(_valid_extraction_json())
+
+    provider = CompatibleProvider(
+        Settings(
+            provider="compatible",
+            model="gpt-6.1-terra",
+            api_key="sk-test",
+            base_url="https://api.openai.com/v1",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+    generate(
+        provider,
+        "extract",
+        {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+        Extraction,
+    )
+    assert len(seen) == 1
+    body = json.loads(seen[0].content)
+    assert body["max_completion_tokens"] == 8000
+    assert "max_tokens" not in body
+
+
+def test_tencent_base_url_uses_max_tokens():
+    """Tencent and other OpenAI-compatible endpoints use max_tokens. The provider
+    must send max_tokens and must NOT send max_completion_tokens."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request):
+        seen.append(request)
+        return _mock_chat_response(_valid_extraction_json())
+
+    provider = _compatible_provider(handler)
+    generate(
+        provider,
+        "extract",
+        {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+        Extraction,
+    )
+    assert len(seen) == 1
+    body = json.loads(seen[0].content)
+    assert body["max_tokens"] == 8000
+    assert "max_completion_tokens" not in body

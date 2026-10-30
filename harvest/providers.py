@@ -91,26 +91,34 @@ class CompatibleProvider:
 
     def structured_generate(self, operation, payload, schema):
         prompt, meta = prompt_info(operation)
+        # Build the request body first. OpenAI's latest models (e.g. gpt-6.1-terra)
+        # reject max_tokens and require max_completion_tokens. Tencent and other
+        # OpenAI-compatible endpoints use max_tokens. Select the correct parameter
+        # based on the configured base URL — do NOT globally replace either.
+        body = {
+            "model": self.settings.model,
+            "stream": False,
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {
+                    "role": "system",
+                    "content": prompt + "\nJSON schema:\n" + json.dumps(schema),
+                },
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+        }
+        if "api.openai.com" in self.settings.base_url:
+            body["max_completion_tokens"] = 8000
+        else:
+            body["max_tokens"] = 8000
         with httpx.Client(
             timeout=self.settings.timeout, transport=self.transport, follow_redirects=False
         ) as client:
             response = client.post(
                 self.settings.base_url.rstrip("/") + "/chat/completions",
                 headers={"Authorization": f"Bearer {self.settings.api_key}"},
-                json={
-                    "model": self.settings.model,
-                    "stream": False,
-                    "temperature": 0,
-                    "max_tokens": 8000,
-                    "response_format": {"type": "json_object"},
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": prompt + "\nJSON schema:\n" + json.dumps(schema),
-                        },
-                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                    ],
-                },
+                json=body,
             )
             response.raise_for_status()
             body = response.json()

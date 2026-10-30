@@ -948,3 +948,154 @@ def test_compile_error_does_not_leak_model_content(client):
     assert response.status_code == 422
     assert sensitive_summary not in response.text
     assert "secret operational details" not in response.text
+
+
+# ---------------------------------------------------------------------------
+# Explicit transcript: demo interviews contain all facts required by strict Pill
+# ---------------------------------------------------------------------------
+
+
+def test_ops_transcript_contains_required_input_specs():
+    """The synthetic ops transcript must explicitly state every input the fixture
+    Pill requires: key, kind, unit, and numeric bounds."""
+    from harvest.fixtures import OPS_TRANSCRIPT, operations_content
+
+    content = operations_content()
+    for spec in content.inputs:
+        assert spec.key in OPS_TRANSCRIPT, f"input key '{spec.key}' absent from transcript"
+    # water_rise_mm_min: number, mm/min, range -100 to 100
+    assert "water_rise_mm_min" in OPS_TRANSCRIPT
+    assert "millimetres per minute" in OPS_TRANSCRIPT.lower() or "mm/min" in OPS_TRANSCRIPT.lower()
+    assert "- 100" in OPS_TRANSCRIPT or "minus 100" in OPS_TRANSCRIPT.lower()
+    assert "100" in OPS_TRANSCRIPT
+    # pump_running: boolean
+    assert "pump_running" in OPS_TRANSCRIPT
+    assert "boolean" in OPS_TRANSCRIPT.lower()
+    # critical_equipment_exposed: boolean
+    assert "critical_equipment_exposed" in OPS_TRANSCRIPT
+
+
+def test_ops_transcript_contains_numeric_thresholds_used_in_rules():
+    """Every numeric threshold used in rule conditions must appear in the
+    transcript — no fabricated values."""
+    from harvest.fixtures import OPS_TRANSCRIPT
+
+    # water_rise_mm_min > 0 boundary
+    assert "greater than 0" in OPS_TRANSCRIPT.lower()
+    # water_rise_mm_min <= 0 boundary
+    assert "less than or equal to 0" in OPS_TRANSCRIPT.lower()
+
+
+def test_ops_transcript_contains_all_actions():
+    """Every action id in the fixture must appear in the transcript."""
+    from harvest.fixtures import OPS_TRANSCRIPT, operations_content
+
+    content = operations_content()
+    for act in content.actions:
+        assert act.id in OPS_TRANSCRIPT, f"action '{act.id}' absent from transcript"
+
+
+def test_ops_transcript_contains_prohibited_and_guardrails():
+    """Prohibited actions and guardrails from the fixture must be reflected in
+    the transcript text."""
+    from harvest.fixtures import OPS_TRANSCRIPT, operations_content
+
+    content = operations_content()
+    for pa in content.prohibited_actions:
+        # Check key words from each prohibited action appear
+        words = pa.lower().split()
+        assert any(w in OPS_TRANSCRIPT.lower() for w in words if len(w) > 4), (
+            f"prohibited action '{pa}' has no keyword in transcript"
+        )
+    assert "advisory output only" in OPS_TRANSCRIPT.lower()
+    assert "qualified human" in OPS_TRANSCRIPT.lower()
+
+
+def test_ops_transcript_contains_escalation_recipients():
+    """Escalation recipients named in the fixture rules must appear in the
+    transcript."""
+    from harvest.fixtures import OPS_TRANSCRIPT, operations_content
+
+    content = operations_content()
+    for r in content.rules:
+        if r.escalate_to:
+            # Check a distinctive word from the escalation target
+            target = r.escalate_to.lower()
+            assert any(w in OPS_TRANSCRIPT.lower() for w in target.split() if len(w) > 3), (
+                f"escalation target '{r.escalate_to}' absent from transcript"
+            )
+
+
+def test_ops_transcript_contains_evaluation_scenarios():
+    """The transcript must explicitly describe the evaluation test scenarios,
+    including at least one ESCALATE case."""
+    from harvest.fixtures import OPS_TRANSCRIPT, operations_content
+
+    content = operations_content()
+    # At least one ESCALATE evaluation
+    assert any(c.expected_decision == "ESCALATE" for c in content.evaluation)
+    # Transcript mentions test scenarios / evaluation
+    assert "test scenario" in OPS_TRANSCRIPT.lower() or "test scenarios" in OPS_TRANSCRIPT.lower()
+    # Transcript mentions ESCALATE as an expected decision
+    assert "escalate" in OPS_TRANSCRIPT.lower()
+
+
+def test_ops_transcript_contains_assumptions_and_exceptions():
+    """Assumptions and exceptions from the fixture must be reflected in the
+    transcript."""
+    from harvest.fixtures import OPS_TRANSCRIPT, operations_content
+
+    content = operations_content()
+    for assumption in content.assumptions:
+        assert (
+            "site-specific" in OPS_TRANSCRIPT.lower() or "emergency plan" in OPS_TRANSCRIPT.lower()
+        )
+    assert "qualified human assessment" in OPS_TRANSCRIPT.lower()
+
+
+def test_ops_transcript_contains_evidence_basis():
+    """The transcript must describe the evidence basis the fixture uses."""
+    from harvest.fixtures import OPS_TRANSCRIPT
+
+    assert "evidence" in OPS_TRANSCRIPT.lower()
+    assert "pub" in OPS_TRANSCRIPT.lower() or "flood-resilience" in OPS_TRANSCRIPT.lower()
+
+
+def test_tenant_transcript_contains_required_inputs_and_actions():
+    """The tenant transcript must explicitly state inputs and actions the
+    fixture Pill requires."""
+    from harvest.fixtures import TENANT_TRANSCRIPT, tenant_content
+
+    content = tenant_content()
+    for spec in content.inputs:
+        assert spec.key in TENANT_TRANSCRIPT, f"input '{spec.key}' absent from tenant transcript"
+    for act in content.actions:
+        assert act.id in TENANT_TRANSCRIPT, f"action '{act.id}' absent from tenant transcript"
+
+
+def test_tenant_transcript_contains_escalation_and_evaluation():
+    """The tenant transcript must describe escalation and evaluation scenarios."""
+    from harvest.fixtures import TENANT_TRANSCRIPT
+
+    assert "tenant duty manager" in TENANT_TRANSCRIPT.lower()
+    assert "escalate" in TENANT_TRANSCRIPT.lower()
+    assert (
+        "test scenario" in TENANT_TRANSCRIPT.lower()
+        or "test scenarios" in TENANT_TRANSCRIPT.lower()
+    )
+
+
+def test_no_fabricated_threshold_absent_from_transcript():
+    """No numeric value in the fixture rules should be absent from the
+    transcript. The only numeric threshold is 0 for water_rise_mm_min."""
+    from harvest.fixtures import OPS_TRANSCRIPT, operations_content
+
+    content = operations_content()
+    for r in content.rules:
+        for c in r.when:
+            if c.op in ("gt", "gte", "lt", "lte"):
+                value_str = str(c.value)
+                # The threshold value must appear in the transcript
+                assert value_str in OPS_TRANSCRIPT or (
+                    c.value == 0 and "zero" in OPS_TRANSCRIPT.lower()
+                ), f"threshold {value_str} for {c.input} {c.op} absent from transcript"

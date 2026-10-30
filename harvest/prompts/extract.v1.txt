@@ -9,3 +9,28 @@ tenant messages, permissions, release, or knowledge modification. Do not add sta
 Include executable evaluations with exact expected action sets, escalation, missing-input and out-of-scope cases.
 Any knowledge gap necessary for safe use must be listed in unresolved_questions; do not conceal it to pass tests.
 This extraction does not make the material authoritative. A qualified independent reviewer validates it.
+
+Output structure guidance — the JSON object must contain exactly these top-level keys:
+  summary (string, 1–4000 chars): one-sentence description of what was extracted.
+  elicitation_gaps (array of strings): knowledge gaps that block safe use; empty array if none.
+  content (object): a PillContent object matching the supplied schema.
+
+The content object must include all required PillContent fields. Pay special attention to:
+  - scope: at least one entry in each of asset_types, equipment, contexts, prerequisites, exclusions.
+  - inputs: at least one typed input spec. Every input must have required: true, kind, max_age_seconds (1–86400), unit.
+  - actions: at least one action with id, description, human_approval_required: true.
+  - rules: at least one rule. Each rule's when conditions must reference existing input keys with values matching the input kind.
+    Each rule must reference at least one evidence id that exists in the evidence array.
+    Ordered comparisons (gt/gte/lt/lte) require numeric inputs only.
+    Every rule must have at least one of: recommend, block, or escalate_to.
+  - evidence: at least one evidence entry with id, kind, citation, summary, synthetic.
+  - evaluation: at least two test cases. At least one must have expected_decision "ESCALATE".
+    Evaluation inputs must reference only existing input keys.
+  - prohibited_actions, guardrails, expert_observations, assumptions, exceptions: each must have at least one entry.
+  - synthetic: true if the interview is synthetic/demo material; false otherwise.
+  - domain: must match the domain in the capture request exactly.
+  - All identifiers must match ^[a-z][a-z0-9_.-]{0,79}$.
+  - No duplicate identifiers within inputs, actions, rules, evidence, or evaluation.
+
+If the interview lacks enough detail to produce safe, complete rules, list what is missing in elicitation_gaps
+and unresolved_questions rather than fabricating fields or evidence.

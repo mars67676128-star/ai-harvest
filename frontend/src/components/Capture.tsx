@@ -44,6 +44,8 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
   const isExpert = role === "expert";
   const [questions, setQuestions] = useState<ElicitationQuestion[]>([]);
   const [which, setWhich] = useState(0);
+  const [title, setTitle] = useState(DEMO_INTERVIEWS[0].title);
+  const [domain, setDomain] = useState<string>(DEMO_INTERVIEWS[0].domain);
   const [transcript, setTranscript] = useState(cleanText(DEMO_INTERVIEWS[0].transcript));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,19 +57,21 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
 
   const pick = (i: number) => {
     setWhich(i);
+    setTitle(DEMO_INTERVIEWS[i].title);
+    setDomain(DEMO_INTERVIEWS[i].domain);
     setTranscript(cleanText(DEMO_INTERVIEWS[i].transcript));
     setDraft(null);
     setError(null);
   };
-  const interview = DEMO_INTERVIEWS[which];
-  const edited = transcript.trim() !== cleanText(interview.transcript);
+  const edited = transcript.trim() !== cleanText(DEMO_INTERVIEWS[which].transcript);
+  const transcriptTooShort = transcript.trim().length < 30;
 
   const run = async () => {
     setBusy(true);
     setError(null);
     setDraft(null);
     try {
-      const cap = await createCapture({ title: interview.title, transcript: edited ? transcript : interview.transcript, domain: interview.domain, synthetic: true });
+      const cap = await createCapture({ title, transcript, domain: domain as never, synthetic: true });
       const started = Date.now();
       const ex = await extractCapture(cap.id);
       const wait = 2800 - (Date.now() - started);
@@ -77,7 +81,9 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
       const msg = e instanceof Error ? e.message : String(e);
       setError(
         msg.includes("MOCK_FIXTURE_ONLY")
-          ? "The offline demo AI can only read the two recorded interviews word-for-word. Your edited text needs a live AI model (e.g. Tencent Hunyuan) — press “Use the recording” to continue the demo."
+          ? "The offline demo AI can only read the two recorded interviews word-for-word. To extract from your own interview, configure a live AI model (HARVEST_LLM_PROVIDER=tencent). Or press a “Load example” button to continue the demo."
+          : msg.includes("LLM_UNAVAILABLE")
+          ? "The live AI model is unavailable or returned invalid output. No knowledge was changed. Check server credentials (HARVEST_LLM_API_KEY, HARVEST_LLM_MODEL) and try again, or switch to demo mode."
           : msg
       );
     } finally {
@@ -123,7 +129,7 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
         <div className="cap-tabs">
           {DEMO_INTERVIEWS.map((d, i) => (
             <button key={d.domain} className={`cap-tab ${which === i ? "on" : ""}`} onClick={() => pick(i)}>
-              <DomainIcon domain={d.domain} size={24} /> {d.domain}
+              <DomainIcon domain={d.domain} size={24} /> Load example: {d.domain}
             </button>
           ))}
         </div>
@@ -132,8 +138,36 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
             <Avatar actor="expert" size={34} />
             <div>
               <div><b>{tan.name}</b> · {tan.title}</div>
-              <div className="text-muted text-sm">{interview.title} · recorded interview</div>
+              <div className="text-muted text-sm">Type your own interview or load an example above.</div>
             </div>
+          </div>
+          <div className="cap-form-row">
+            <label className="cap-field">
+              <span className="cap-label">Title</span>
+              <input
+                className="cap-input"
+                value={title}
+                onChange={(e) => { setTitle(e.target.value); setDraft(null); }}
+                placeholder="e.g. Interview with the duty engineer about a chiller trip"
+                aria-label="Interview title"
+              />
+            </label>
+            <label className="cap-field">
+              <span className="cap-label">Domain</span>
+              <select
+                className="cap-input"
+                value={domain}
+                onChange={(e) => { setDomain(e.target.value); setDraft(null); }}
+                aria-label="Domain"
+              >
+                <option>Asset Operations</option>
+                <option>Energy Optimisation</option>
+                <option>Leasing</option>
+                <option>Technical Services</option>
+                <option>Sustainability</option>
+                <option>Tenant Experience</option>
+              </select>
+            </label>
           </div>
           <textarea
             className="cap-text"
@@ -141,14 +175,19 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
             onChange={(e) => { setTranscript(e.target.value); setDraft(null); }}
             rows={7}
             aria-label="Interview transcript"
+            placeholder="Paste or type the full expert interview here…"
           />
           <div className="cap-actions">
             <span className="text-muted text-sm">
-              {edited ? "Edited — the offline demo AI only reads the recording; a live model reads anything." : "Interview answers, transcribed."}
+              {transcriptTooShort
+                ? "Interview needs at least 30 characters."
+                : edited
+                ? "Free-form interview — a live model reads any text. The offline demo AI only reads the two example recordings."
+                : "Interview answers, transcribed."}
             </span>
             <div className="flex gap-8">
               {edited && <button className="btn btn-quiet" onClick={() => pick(which)}>Use the recording</button>}
-              <button className="btn btn-primary" onClick={run} disabled={busy || !isExpert}>
+              <button className="btn btn-primary" onClick={run} disabled={busy || !isExpert || transcriptTooShort}>
                 {busy ? "AI is drafting…" : "Draft a pill with AI"}
               </button>
             </div>
@@ -224,10 +263,16 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
       {/* 4. Next */}
       <section className="cap-section">
         <p className="text-dim">Next: <b>{tan.name}</b> checks the draft and submits it for review.</p>
-        <div className="how-teaser">
-          In this demo, this interview already became <a onClick={() => onGoToPill(PILL_FOR_DOMAIN[interview.domain])}>
-            {interview.domain === "Asset Operations" ? "Monsoon near-miss triage" : "Tenant incident continuity"} →</a>
-        </div>
+        {PILL_FOR_DOMAIN[domain] ? (
+          <div className="how-teaser">
+            In this demo, a similar interview already became <a onClick={() => onGoToPill(PILL_FOR_DOMAIN[domain])}>
+              {domain === "Asset Operations" ? "Monsoon near-miss triage" : "Tenant incident continuity"} →</a>
+          </div>
+        ) : (
+          <div className="how-teaser">
+            For a new domain, compile the draft into a candidate pill and submit it for independent review.
+          </div>
+        )}
       </section>
     </div>
   );

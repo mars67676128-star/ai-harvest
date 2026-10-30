@@ -940,6 +940,11 @@ details[open] > summary::before { content: "▾ "; }
 .cap-text { width: 100%; border: 1px solid var(--border-light); border-radius: 10px; padding: 12px 14px; font: inherit; font-size: 14px; line-height: 1.6; color: var(--text); background: var(--surface-alt); resize: vertical; }
 .cap-text:focus { outline: none; border-color: var(--accent); background: var(--surface); }
 .cap-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+.cap-form-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.cap-field { flex: 1 1 200px; display: flex; flex-direction: column; gap: 4px; }
+.cap-label { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.cap-input { border: 1px solid var(--border-light); border-radius: 10px; padding: 8px 12px; font: inherit; font-size: 14px; color: var(--text); background: var(--surface-alt); }
+.cap-input:focus { outline: none; border-color: var(--accent); background: var(--surface); }
 .draft-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-top: 16px; }
 .draft-block { background: var(--surface); border-radius: var(--r-md); padding: 14px 16px; box-shadow: var(--shadow-sm); font-size: 14px; color: var(--text-secondary); }
 .draft-block p { margin: 4px 0; }

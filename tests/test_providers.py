@@ -7,7 +7,7 @@ from harvest.config import Settings
 from harvest.demo import BASE, call
 from harvest.errors import DomainError
 from harvest.fixtures import BACKFLOW_TEXT, OPS_ID, OPS_TRANSCRIPT, demo_case, operations_content
-from harvest.models import Explanation, Extraction
+from harvest.models import Explanation, Extraction, ExtractionContent
 from harvest.providers import CompatibleProvider, generate
 
 
@@ -455,24 +455,15 @@ def test_demo_fixture_captures_remain_synthetic(client):
 
 def test_incomplete_interview_does_not_invent_facts():
     """A deliberately vague interview — 'If pressure gets too high, call someone.'
-    — must not yield a fabricated extraction with an invented numeric threshold,
-    named escalation role, or unsupported operational rule.
+    — must yield a sparse extraction draft with empty inputs/rules/evaluation
+    and gaps listed in elicitation_gaps, NOT a fabricated extraction with an
+    invented numeric threshold, named escalation role, or unsupported rule.
 
-    This test simulates two model behaviours the revised prompt is designed to
-    produce:
-
-    1. The model heeds the prompt and returns a sparse extraction with gaps
-       instead of fabricated content. Schema validation rejects it safely.
-    2. The model ignores the prompt and fabricates a numeric threshold. The
-       extraction may pass schema validation, but the system never produces
-       an authoritative result and no approved knowledge changes.
-
-    In both cases, no Pill is created and no approved knowledge is modified.
+    The sparse draft is a valid ExtractionContent object — it is stored as a
+    non-authoritative draft but cannot compile into a candidate Pill.
     """
     incomplete = "If pressure gets too high, call someone."
 
-    # Path 1: model returns a sparse extraction (no invented fields) — fails
-    # schema validation because required fields are missing or empty.
     sparse_payload = {
         "summary": "Interview mentions pressure and escalation but lacks specifics.",
         "elicitation_gaps": [
@@ -520,12 +511,17 @@ def test_incomplete_interview_does_not_invent_facts():
             "author": "expert",
         }
     }
-    with pytest.raises(DomainError) as exc:
-        generate(provider, "extract", capture, Extraction)
-    assert exc.value.code == "LLM_UNAVAILABLE"
-    assert exc.value.status == 502
-    # No invented threshold or escalation role leaked into the error message
-    assert "live-secret" not in str(exc.value)
+    extraction, meta = generate(provider, "extract", capture, Extraction)
+    # Sparse draft is a valid Extraction — no fabricated fields
+    assert isinstance(extraction, Extraction)
+    assert isinstance(extraction.content, ExtractionContent)
+    assert extraction.content.inputs == []
+    assert extraction.content.rules == []
+    assert extraction.content.evaluation == []
+    assert extraction.content.actions == []
+    assert len(extraction.elicitation_gaps) == 3
+    # API key must never appear in metadata
+    assert "live-secret" not in json.dumps(meta)
 
 
 def test_incomplete_interview_fabricated_output_still_non_authoritative(client):
@@ -775,3 +771,180 @@ def test_validation_diagnostic_excludes_input_values(monkeypatch, capsys):
     # Model-generated content must never appear in diagnostic output
     assert "Incomplete" not in captured.err
     assert "Missing content fields" not in captured.err
+
+
+# ---------------------------------------------------------------------------
+# Sparse extraction model: ExtractionContent allows incomplete knowledge
+# ---------------------------------------------------------------------------
+
+
+def _sparse_extraction_json(domain: str = "Asset Operations") -> dict:
+    """Build a JSON object with empty inputs/rules/evaluation — a valid
+    ExtractionContent but NOT a valid PillContent."""
+    content = operations_content().model_dump(mode="json")
+    content["domain"] = domain
+    content["inputs"] = []
+    content["rules"] = []
+    content["evaluation"] = []
+    content["actions"] = []
+    content["evidence"] = []
+    content["expert_observations"] = []
+    content["assumptions"] = []
+    content["exceptions"] = []
+    content["prohibited_actions"] = []
+    content["guardrails"] = []
+    return {
+        "summary": "Sparse extraction with gaps — interview lacked operational detail.",
+        "elicitation_gaps": ["No thresholds described", "No escalation roles named"],
+        "content": content,
+    }
+
+
+def test_live_extraction_allows_empty_inputs_rules_evaluation():
+    """A live extraction may validly return empty inputs, rules, and evaluation
+    when the interview does not support them. ExtractionContent accepts this."""
+    payload = _sparse_extraction_json()
+    provider = _compatible_provider(lambda req: _mock_chat_response(payload))
+    capture = {
+        "capture": {
+            "title": "Vague interview",
+            "transcript": "The expert mentioned pressure but gave no specifics.",
+            "domain": "Asset Operations",
+            "synthetic": False,
+            "author": "expert",
+        }
+    }
+    extraction, _ = generate(provider, "extract", capture, Extraction)
+    assert isinstance(extraction.content, ExtractionContent)
+    assert extraction.content.inputs == []
+    assert extraction.content.rules == []
+    assert extraction.content.evaluation == []
+
+
+def test_incomplete_extraction_remains_non_authoritative(client):
+    """A sparse extraction draft is stored but no pill is created."""
+    payload = _sparse_extraction_json()
+    client.app.state.service.provider = _compatible_provider(
+        lambda req: _mock_chat_response(payload)
+    )
+    capture = call(
+        client,
+        "POST",
+        "/captures",
+        "expert",
+        {
+            "title": "Vague interview",
+            "domain": "Asset Operations",
+            "transcript": "The expert mentioned pressure but gave no specifics at all.",
+            "synthetic": False,
+        },
+    )
+    extraction = call(client, "POST", f"/captures/{capture['id']}/extract", "expert")
+    assert extraction["content"]["inputs"] == []
+    assert extraction["content"]["rules"] == []
+    assert extraction["content"]["evaluation"] == []
+    # No pill created — draft is non-authoritative
+    assert call(client, "GET", "/pills") == []
+
+
+def test_compile_fails_safely_when_extraction_is_incomplete(client):
+    """Compiling a sparse extraction into a candidate Pill must fail with
+    INCOMPLETE_KNOWLEDGE and list safe field paths only — never transcript
+    content or model-generated text."""
+    payload = _sparse_extraction_json()
+    client.app.state.service.provider = _compatible_provider(
+        lambda req: _mock_chat_response(payload)
+    )
+    capture = call(
+        client,
+        "POST",
+        "/captures",
+        "expert",
+        {
+            "title": "Vague interview",
+            "domain": "Asset Operations",
+            "transcript": "The expert mentioned pressure but gave no specifics at all.",
+            "synthetic": False,
+        },
+    )
+    call(client, "POST", f"/captures/{capture['id']}/extract", "expert")
+    response = client.post(
+        BASE + f"/captures/{capture['id']}/compile",
+        headers={"Authorization": "Bearer demo-expert"},
+        json={"pill_id": "test.incomplete"},
+    )
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "INCOMPLETE_KNOWLEDGE"
+    fields = error["details"]["fields"]
+    # Safe field paths are listed
+    assert "inputs" in fields
+    assert "rules" in fields
+    assert "evaluation" in fields
+    # No pill created
+    assert call(client, "GET", "/pills") == []
+    # No transcript content leaked
+    assert "pressure but gave no specifics" not in response.text
+
+
+def test_complete_extraction_still_compiles(client):
+    """A complete extraction with full inputs/rules/evaluation must compile
+    into a candidate Pill exactly as before."""
+    payload = _valid_extraction_json()
+    client.app.state.service.provider = _compatible_provider(
+        lambda req: _mock_chat_response(payload)
+    )
+    capture = call(
+        client,
+        "POST",
+        "/captures",
+        "expert",
+        {
+            "title": "Complete interview",
+            "domain": "Asset Operations",
+            "transcript": "A detailed expert interview with thresholds and escalation.",
+            "synthetic": False,
+        },
+    )
+    call(client, "POST", f"/captures/{capture['id']}/extract", "expert")
+    draft = call(
+        client,
+        "POST",
+        f"/captures/{capture['id']}/compile",
+        "expert",
+        {"pill_id": "test.complete"},
+    )
+    assert draft["status"] == "DRAFT"
+    assert draft["pill_id"] == "test.complete"
+
+
+def test_compile_error_does_not_leak_model_content(client):
+    """The INCOMPLETE_KNOWLEDGE error must never expose model-generated content
+    or transcript text — only safe structural field paths."""
+    sensitive_summary = "Model generated this sensitive summary with secret details"
+    payload = _sparse_extraction_json()
+    payload["summary"] = sensitive_summary
+    client.app.state.service.provider = _compatible_provider(
+        lambda req: _mock_chat_response(payload)
+    )
+    capture = call(
+        client,
+        "POST",
+        "/captures",
+        "expert",
+        {
+            "title": "Sensitive interview",
+            "domain": "Asset Operations",
+            "transcript": "This transcript contains secret operational details.",
+            "synthetic": False,
+        },
+    )
+    call(client, "POST", f"/captures/{capture['id']}/extract", "expert")
+    response = client.post(
+        BASE + f"/captures/{capture['id']}/compile",
+        headers={"Authorization": "Bearer demo-expert"},
+        json={"pill_id": "test.leak"},
+    )
+    assert response.status_code == 422
+    assert sensitive_summary not in response.text
+    assert "secret operational details" not in response.text

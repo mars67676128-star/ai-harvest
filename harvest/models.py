@@ -201,6 +201,80 @@ class PillContent(Model):
         return self
 
 
+class ExtractionContent(Model):
+    """Sparse extraction-draft content.
+
+    Same field structure as PillContent but allows empty collections where
+    knowledge may legitimately be missing. The anti-fabrication principle is
+    preserved: the model never invents thresholds, rules, evaluation cases, or
+    escalation roles to satisfy schema completeness. Missing knowledge surfaces
+    in elicitation_gaps / unresolved_questions instead.
+
+    Cross-reference integrity (unknown actions in rules, unknown inputs, etc.)
+    is still enforced when items are present — a partial draft with broken
+    references is rejected. But a sparse draft with empty collections is valid.
+
+    Compilation into a candidate Pill validates against strict PillContent.
+    """
+
+    schema_version: Literal["1.0"] = "1.0"
+    name: Text
+    domain: Domain
+    description: Text
+    scope: Scope
+    inputs: list[InputSpec] = Field(default_factory=list, max_length=50)
+    facts: list[Text] = Field(default_factory=list)
+    expert_observations: list[Text] = Field(default_factory=list)
+    assumptions: list[Text] = Field(default_factory=list)
+    exceptions: list[Text] = Field(default_factory=list)
+    actions: list[Action] = Field(default_factory=list, max_length=50)
+    prohibited_actions: list[Text] = Field(default_factory=list)
+    guardrails: list[Text] = Field(default_factory=list)
+    rules: list[Rule] = Field(default_factory=list, max_length=100)
+    evidence: list[Evidence] = Field(default_factory=list, max_length=100)
+    dependencies: list[Dependency] = Field(default_factory=list, max_length=1)
+    evaluation: list[EvaluationCase] = Field(default_factory=list, max_length=100)
+    unresolved_questions: list[Text] = Field(default_factory=list)
+    contradictions: list[Text] = Field(default_factory=list)
+    synthetic: bool = True
+
+    @model_validator(mode="after")
+    def linked_and_typed(self):
+        for label, items, key in [
+            ("inputs", self.inputs, "key"),
+            ("actions", self.actions, "id"),
+            ("rules", self.rules, "id"),
+            ("evidence", self.evidence, "id"),
+            ("evaluation", self.evaluation, "id"),
+        ]:
+            ids = [getattr(item, key) for item in items]
+            if len(ids) != len(set(ids)):
+                raise ValueError(f"duplicate identifiers in {label}")
+        inputs = {i.key: i for i in self.inputs}
+        actions = {a.id for a in self.actions}
+        evidence = {e.id for e in self.evidence}
+        for rule in self.rules:
+            if not set(rule.recommend + rule.block) <= actions:
+                raise ValueError(f"unknown action in {rule.id}")
+            if not set(rule.evidence_ids) <= evidence:
+                raise ValueError(f"unknown evidence in {rule.id}")
+            for c in rule.when:
+                if c.input not in inputs or not scalar_fits(inputs[c.input].kind, c.value):
+                    raise ValueError(f"unknown or mistyped input in {rule.id}")
+                if c.op not in ("eq", "ne") and inputs[c.input].kind != "number":
+                    raise ValueError("ordered comparisons require numeric inputs")
+                if not inputs[c.input].required:
+                    raise ValueError(
+                        "rule conditions must use required inputs; missing evidence cannot bypass a rule"
+                    )
+        for case in self.evaluation:
+            if not set(case.expected_actions + case.expected_blocked) <= actions:
+                raise ValueError("evaluation references an unknown action")
+            if not set(case.inputs) <= inputs.keys():
+                raise ValueError("evaluation references an unknown input")
+        return self
+
+
 class CreatePill(Model):
     pill_id: Identifier
     version: Version
@@ -238,7 +312,7 @@ class CompileRequest(Model):
 class Extraction(Model):
     summary: Text
     elicitation_gaps: list[Text]
-    content: PillContent
+    content: ExtractionContent
 
 
 class Note(Model):

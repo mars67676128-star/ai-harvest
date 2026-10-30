@@ -147,6 +147,26 @@ class Service:
                 raise DomainError(
                     409, "EXTRACTION_REQUIRED", "Extract candidate expertise before compiling"
                 )
+            # Validate the sparse extraction draft against strict PillContent.
+            # If required structure is missing, fail safely with field paths only.
+            try:
+                PillContent.model_validate(extraction["content"])
+            except ValueError as exc:
+                raise DomainError(
+                    422,
+                    "INCOMPLETE_KNOWLEDGE",
+                    "Extraction draft is missing required knowledge structure for a "
+                    "candidate Pill. Resolve the listed gaps before compiling.",
+                    details={"fields": self._incomplete_fields(extraction["content"])},
+                ) from exc
+            except Exception as exc:
+                raise DomainError(
+                    422,
+                    "INCOMPLETE_KNOWLEDGE",
+                    "Extraction draft is missing required knowledge structure for a "
+                    "candidate Pill. Resolve the listed gaps before compiling.",
+                    details={"fields": self._incomplete_fields(extraction["content"])},
+                ) from exc
             req = CreatePill(
                 **request.model_dump(),
                 content=extraction["content"],
@@ -154,6 +174,33 @@ class Service:
             )
             validate_governance_authority(req, actor, self.known_actors)
             return insert_pill(con, req, actor)
+
+    @staticmethod
+    def _incomplete_fields(content: dict) -> list[str]:
+        """Return safe field paths that are empty/missing in a sparse extraction.
+
+        Only structural field names are returned — never transcript content,
+        model-generated text, or values.
+        """
+        required_nonempty = [
+            "inputs",
+            "expert_observations",
+            "assumptions",
+            "exceptions",
+            "actions",
+            "prohibited_actions",
+            "guardrails",
+            "rules",
+            "evidence",
+        ]
+        fields = [f for f in required_nonempty if not content.get(f)]
+        if len(content.get("evaluation", [])) < 2:
+            fields.append("evaluation")
+        elif not any(
+            c.get("expected_decision") == "ESCALATE" for c in content.get("evaluation", [])
+        ):
+            fields.append("evaluation.escalation")
+        return fields
 
     def create_case(self, request: CaseInput, actor):
         require_role(actor, "operator")

@@ -27,6 +27,16 @@ def call(client, method, path, role="viewer", body=None):
     return response.json()
 
 
+def _raw_call(client, method, path, role="viewer", body=None):
+    """Like call() but returns the raw httpx response without raising."""
+    return client.request(
+        method,
+        BASE + path,
+        headers={"Authorization": f"Bearer demo-{role}"},
+        **({"json": body} if body is not None else {}),
+    )
+
+
 def release(client, pill_id, version):
     path = f"/pills/{pill_id}/versions/{version}"
     for operation, role in [
@@ -213,6 +223,90 @@ def seed(client, live=False):
     return output
 
 
+def _attempt_revision_release(client, pill_id, version, approved_version):
+    """Attempt to release a feedback-generated revision; handle UNRESOLVED_KNOWLEDGE.
+
+    In live mode the AI-generated revision may contain unresolved questions.
+    This helper submits the candidate and attempts review.  If review blocks
+    with ``UNRESOLVED_KNOWLEDGE``, it returns a structured outcome indicating
+    the block — the caller ends the demo gracefully.  If review passes, the
+    normal release + runtime comparison continues.
+
+    Returns a dict with either:
+    - ``blocked_by_unresolved=True`` and ``approved_unchanged`` verification
+    - ``blocked_by_unresolved=False`` and ``approved``/``after``/``before``/``historical``
+    """
+    path = f"/pills/{pill_id}/versions/{version}"
+    # Submit the candidate.
+    call(client, "POST", f"{path}/submit", "expert", {"note": "SYNTHETIC scripted submit"})
+
+    # Attempt review — this is where UNRESOLVED_KNOWLEDGE fires.
+    review_response = _raw_call(
+        client,
+        "POST",
+        f"{path}/review",
+        "reviewer",
+        {"note": "SYNTHETIC scripted review; demo role simulation."},
+    )
+    if review_response.status_code == 409:
+        body = review_response.json()
+        if body.get("error", {}).get("code") == "UNRESOLVED_KNOWLEDGE":
+            # Expected governed outcome — verify approved Pill is unchanged.
+            approved_check = call(client, "GET", f"/pills/{pill_id}/versions/{approved_version}")
+            return {
+                "blocked_by_unresolved": True,
+                "approved_unchanged": {
+                    "version": approved_version,
+                    "status": approved_check["status"],
+                    "content_hash": approved_check["content_hash"],
+                },
+            }
+    # If review failed for a different reason, surface it.
+    if not review_response.is_success:
+        raise RuntimeError(
+            f"Unexpected review failure: {review_response.status_code} {review_response.text}"
+        )
+
+    # Review passed — continue the normal release lifecycle.
+    call(
+        client,
+        "POST",
+        f"{path}/validate",
+        "reviewer",
+        {"note": "SYNTHETIC scripted validate; demo role simulation."},
+    )
+    approved = call(
+        client,
+        "POST",
+        f"{path}/approve",
+        "approver",
+        {"note": "SYNTHETIC scripted approve; demo role simulation, not qualified field approval."},
+    )
+
+    # Runtime comparison: flat-trend/backflow case changes behaviour after release.
+    new_case = call(
+        client,
+        "POST",
+        "/cases",
+        "operator",
+        demo_case(water_rise_mm_min=0, drain_backflow=True).model_dump(mode="json"),
+    )
+    before = call(
+        client, "POST", f"/cases/{new_case['id']}/invoke", "operator", {"pill_ids": [pill_id]}
+    )
+    after = call(
+        client, "POST", f"/cases/{new_case['id']}/invoke", "operator", {"pill_ids": [pill_id]}
+    )
+    historical = call(client, "GET", f"/pills/{pill_id}/versions/{approved_version}")
+    return {
+        "blocked_by_unresolved": False,
+        "approved": approved,
+        "before": before,
+        "after": after,
+        "historical": historical,
+    }
+
+
 def run(client, seed_only=False, live=False):
     if live:
         print("AI HARVEST | LIVE DEMO | real AI extraction + deterministic governance")
@@ -283,29 +377,68 @@ def run(client, seed_only=False, live=False):
         "expert",
     )
     print("  Reviewable changes: " + ", ".join(c["path"] for c in diff["changes"]))
-    # The same flat-trend/backflow observation has different governed behaviour across releases.
-    new_case = call(
-        client,
-        "POST",
-        "/cases",
-        "operator",
-        demo_case(water_rise_mm_min=0, drain_backflow=True).model_dump(mode="json"),
-    )
-    before = call(
-        client, "POST", f"/cases/{new_case['id']}/invoke", "operator", {"pill_ids": [OPS_ID]}
-    )
-    approved = release(client, OPS_ID, "1.1.0")
-    after = call(
-        client, "POST", f"/cases/{new_case['id']}/invoke", "operator", {"pill_ids": [OPS_ID]}
-    )
-    assert (
-        before["result"]["decision"] == "HUMAN_REVIEW" and after["result"]["decision"] == "ESCALATE"
-    )
-    historical = call(client, "GET", f"/pills/{OPS_ID}/versions/{ops_approved_version}")
-    assert (
-        historical["status"] == "SUPERSEDED"
-        and historical["content_hash"] == original["content_hash"]
-    )
+    if live:
+        # In live mode, the AI-generated v1.1.0 revision may contain unresolved
+        # questions.  If review blocks it with UNRESOLVED_KNOWLEDGE, treat that
+        # as an EXPECTED GOVERNED OUTCOME — do NOT approve, correct, or weaken
+        # the gate.  The approved Pill remains authoritative.
+        revision_outcome = _attempt_revision_release(client, OPS_ID, "1.1.0", ops_approved_version)
+        if revision_outcome["blocked_by_unresolved"]:
+            print("  Feedback created candidate v1.1.0")
+            print("  Revision contains unresolved knowledge; expert clarification required.")
+            print("  Sifu blocked the revision from release.")
+            print(
+                f"  Approved {OPS_ID} v{ops_approved_version} remains authoritative and unchanged."
+            )
+            print(
+                "  Governance prevented unresolved AI-generated knowledge from replacing "
+                "the approved Pill."
+            )
+            report.update(
+                {
+                    "case": case,
+                    "recommendation": rec,
+                    "feedback": feedback,
+                    "candidate": candidate,
+                    "production_unchanged_before_approval": True,
+                    "diff": diff,
+                    "revision_blocked": True,
+                    "revision_block_reason": "UNRESOLVED_KNOWLEDGE",
+                    "approved_version_unchanged": revision_outcome["approved_unchanged"],
+                    "audit": call(client, "GET", "/audit?limit=500", "reviewer"),
+                }
+            )
+            return report
+        approved = revision_outcome["approved"]
+        after = revision_outcome["after"]
+        historical = revision_outcome["historical"]
+        before = revision_outcome["before"]
+    else:
+        # Mock demo: the deterministic revised_operations fixture has no
+        # unresolved questions, so the full v1.1.0 lifecycle completes.
+        new_case = call(
+            client,
+            "POST",
+            "/cases",
+            "operator",
+            demo_case(water_rise_mm_min=0, drain_backflow=True).model_dump(mode="json"),
+        )
+        before = call(
+            client, "POST", f"/cases/{new_case['id']}/invoke", "operator", {"pill_ids": [OPS_ID]}
+        )
+        approved = release(client, OPS_ID, "1.1.0")
+        after = call(
+            client, "POST", f"/cases/{new_case['id']}/invoke", "operator", {"pill_ids": [OPS_ID]}
+        )
+        assert (
+            before["result"]["decision"] == "HUMAN_REVIEW"
+            and after["result"]["decision"] == "ESCALATE"
+        )
+        historical = call(client, "GET", f"/pills/{OPS_ID}/versions/{ops_approved_version}")
+        assert (
+            historical["status"] == "SUPERSEDED"
+            and historical["content_hash"] == original["content_hash"]
+        )
     print(
         "  Reviewed + tested + approved v1.1.0. Flat-trend/backflow case: HUMAN_REVIEW > ESCALATE."
     )

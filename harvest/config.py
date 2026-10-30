@@ -20,7 +20,7 @@ class Settings:
     base_url: str = "https://tokenhub-intl.tencentcloudmaas.com/v1"
     model: str = ""
     api_key: str = ""
-    timeout: float = 25
+    timeout: float = 60
     tokens: dict[str, Actor] = field(default_factory=demo_tokens)
     cors_origins: list[str] = field(
         default_factory=lambda: ["http://localhost:3000", "http://localhost:5173"]
@@ -65,7 +65,7 @@ class Settings:
             ),
             model=os.getenv("HARVEST_LLM_MODEL", ""),
             api_key=os.getenv("HARVEST_LLM_API_KEY", ""),
-            timeout=float(os.getenv("HARVEST_LLM_TIMEOUT", "25")),
+            timeout=float(os.getenv("HARVEST_LLM_TIMEOUT", "60")),
             tokens={k: Actor.model_validate(v) for k, v in json.loads(token_json).items()}
             if token_json
             else demo_tokens(),

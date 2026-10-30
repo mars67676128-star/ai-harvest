@@ -1307,3 +1307,505 @@ def test_tenant_transcript_states_completeness():
 
     assert "complete for this synthetic workflow" in TENANT_TRANSCRIPT.lower()
     assert "no known contradictions" in TENANT_TRANSCRIPT.lower()
+
+
+# ---------------------------------------------------------------------------
+# OpenAI Structured Outputs: json_schema + strict: true
+# ---------------------------------------------------------------------------
+
+
+def _openai_provider(handler) -> CompatibleProvider:
+    return CompatibleProvider(
+        Settings(
+            provider="compatible",
+            model="gpt-6.1-terra",
+            api_key="sk-test",
+            base_url="https://api.openai.com/v1",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+
+def test_openai_uses_structured_outputs_json_schema():
+    """OpenAI requests must use response_format.type=json_schema (Structured
+    Outputs), not json_object."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request):
+        seen.append(request)
+        return _mock_chat_response(_valid_extraction_json())
+
+    provider = _openai_provider(handler)
+    generate(
+        provider,
+        "extract",
+        {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+        Extraction,
+    )
+    assert len(seen) == 1
+    body = json.loads(seen[0].content)
+    assert body["response_format"]["type"] == "json_schema"
+    assert body["response_format"]["json_schema"]["strict"] is True
+
+
+def test_openai_structured_outputs_passes_supplied_schema():
+    """The actual Pydantic JSON schema must be passed inside response_format."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request):
+        seen.append(request)
+        return _mock_chat_response(_valid_extraction_json())
+
+    provider = _openai_provider(handler)
+    generate(
+        provider,
+        "extract",
+        {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+        Extraction,
+    )
+    body = json.loads(seen[0].content)
+    schema = body["response_format"]["json_schema"]["schema"]
+    # The supplied schema must be the Extraction model's JSON schema
+    expected = Extraction.model_json_schema()
+    assert schema == expected
+    # Must contain key properties from the Pydantic model
+    assert "properties" in schema
+    assert "content" in schema["properties"]
+
+
+def test_openai_structured_outputs_schema_name_is_deterministic():
+    """The schema name must be deterministic and based on the operation."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request):
+        seen.append(request)
+        return _mock_chat_response({"summary": "ok", "uncertainty": "none"})
+
+    provider = _openai_provider(handler)
+    generate(provider, "explain", {"result": {}}, Explanation)
+    body = json.loads(seen[0].content)
+    assert body["response_format"]["json_schema"]["name"] == "sifu_explain"
+
+
+def test_tencent_remains_on_json_object():
+    """Tencent and other non-OpenAI compatible endpoints must stay on
+    json_object mode, not json_schema."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request):
+        seen.append(request)
+        return _mock_chat_response(_valid_extraction_json())
+
+    provider = _compatible_provider(handler)
+    generate(
+        provider,
+        "extract",
+        {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+        Extraction,
+    )
+    assert len(seen) == 1
+    body = json.loads(seen[0].content)
+    assert body["response_format"] == {"type": "json_object"}
+    assert "json_schema" not in body["response_format"]
+
+
+def test_compatible_non_openai_also_uses_json_object():
+    """A generic compatible provider (not api.openai.com) must use json_object."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request):
+        seen.append(request)
+        return _mock_chat_response(_valid_extraction_json())
+
+    provider = CompatibleProvider(
+        Settings(
+            provider="compatible",
+            model="some-model",
+            api_key="key",
+            base_url="https://custom-endpoint.example.com/v1",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+    generate(
+        provider,
+        "extract",
+        {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+        Extraction,
+    )
+    body = json.loads(seen[0].content)
+    assert body["response_format"] == {"type": "json_object"}
+
+
+# ---------------------------------------------------------------------------
+# Bounded transient retry: exactly one retry for transport/HTTP failures
+# ---------------------------------------------------------------------------
+
+
+def _no_sleep(monkeypatch):
+    """Patch time.sleep so retry tests don't actually wait."""
+    import harvest.providers
+
+    monkeypatch.setattr(harvest.providers.time, "sleep", lambda s: None)
+
+
+def test_readtimeout_retries_exactly_once(monkeypatch):
+    """httpx.ReadTimeout must trigger exactly one retry (2 total attempts)."""
+    _no_sleep(monkeypatch)
+    call_count = 0
+
+    def handler(request: httpx.Request):
+        nonlocal call_count
+        call_count += 1
+        raise httpx.ReadTimeout("synthetic timeout")
+
+    provider = _compatible_provider(handler)
+    with pytest.raises(DomainError) as exc:
+        generate(
+            provider,
+            "extract",
+            {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+            Extraction,
+        )
+    assert exc.value.code == "LLM_UNAVAILABLE"
+    assert call_count == 2
+
+
+def test_readtimeout_retries_then_succeeds(monkeypatch):
+    """If the second attempt succeeds, the retry must recover."""
+    _no_sleep(monkeypatch)
+    call_count = 0
+
+    def handler(request: httpx.Request):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise httpx.ReadTimeout("transient")
+        return _mock_chat_response(_valid_extraction_json())
+
+    provider = _compatible_provider(handler)
+    extraction, meta = generate(
+        provider,
+        "extract",
+        {"capture": {"transcript": "novel text", "domain": "Asset Operations", "synthetic": False}},
+        Extraction,
+    )
+    assert isinstance(extraction, Extraction)
+    assert call_count == 2
+
+
+def test_connecttimeout_retries_exactly_once(monkeypatch):
+    _no_sleep(monkeypatch)
+    call_count = 0
+
+    def handler(request: httpx.Request):
+        nonlocal call_count
+        call_count += 1
+        raise httpx.ConnectTimeout("connect timeout")
+
+    provider = _compatible_provider(handler)
+    with pytest.raises(DomainError):
+        generate(
+            provider,
+            "extract",
+            {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+            Extraction,
+        )
+    assert call_count == 2
+
+
+def test_connecterror_retries_exactly_once(monkeypatch):
+    _no_sleep(monkeypatch)
+    call_count = 0
+
+    def handler(request: httpx.Request):
+        nonlocal call_count
+        call_count += 1
+        raise httpx.ConnectError("connection refused")
+
+    provider = _compatible_provider(handler)
+    with pytest.raises(DomainError):
+        generate(
+            provider,
+            "extract",
+            {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+            Extraction,
+        )
+    assert call_count == 2
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
+def test_retryable_http_status_retries_exactly_once(monkeypatch, status):
+    """429 and 5xx must trigger exactly one retry (2 total attempts)."""
+    _no_sleep(monkeypatch)
+    call_count = 0
+
+    def handler(request: httpx.Request):
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(status, json={"error": f"status {status}"})
+
+    provider = _compatible_provider(handler)
+    with pytest.raises(DomainError) as exc:
+        generate(
+            provider,
+            "extract",
+            {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+            Extraction,
+        )
+    assert exc.value.code == "LLM_UNAVAILABLE"
+    assert call_count == 2
+
+
+def test_http_400_does_not_retry(monkeypatch):
+    """400 Bad Request is not transient — must not retry."""
+    _no_sleep(monkeypatch)
+    call_count = 0
+
+    def handler(request: httpx.Request):
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(400, json={"error": "bad request"})
+
+    provider = _compatible_provider(handler)
+    with pytest.raises(DomainError):
+        generate(
+            provider,
+            "extract",
+            {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+            Extraction,
+        )
+    assert call_count == 1
+
+
+def test_http_401_does_not_retry(monkeypatch):
+    """401 Unauthorized is not transient — must not retry."""
+    _no_sleep(monkeypatch)
+    call_count = 0
+
+    def handler(request: httpx.Request):
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(401, json={"error": "unauthorized"})
+
+    provider = _compatible_provider(handler)
+    with pytest.raises(DomainError):
+        generate(
+            provider,
+            "extract",
+            {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+            Extraction,
+        )
+    assert call_count == 1
+
+
+def test_validation_failure_does_not_retry(monkeypatch):
+    """Pydantic schema validation failure must not retry — it's not transient."""
+    _no_sleep(monkeypatch)
+    call_count = 0
+
+    def handler(request: httpx.Request):
+        nonlocal call_count
+        call_count += 1
+        # Valid JSON but schema-invalid content
+        bad_payload = {
+            "summary": "Missing content fields",
+            "elicitation_gaps": [],
+            "content": {"name": "Incomplete", "domain": "Asset Operations"},
+        }
+        return _mock_chat_response(bad_payload)
+
+    provider = _compatible_provider(handler)
+    with pytest.raises(DomainError) as exc:
+        generate(
+            provider,
+            "extract",
+            {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+            Extraction,
+        )
+    assert exc.value.code == "LLM_UNAVAILABLE"
+    assert call_count == 1
+
+
+def test_invalid_json_does_not_retry(monkeypatch):
+    """Invalid JSON response must not retry — it's not transient."""
+    _no_sleep(monkeypatch)
+    call_count = 0
+
+    def handler(request: httpx.Request):
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(
+            200,
+            json={
+                "id": "req-test",
+                "choices": [
+                    {"finish_reason": "stop", "message": {"content": "not valid json"}},
+                ],
+                "usage": {"total_tokens": 1},
+            },
+        )
+
+    provider = _compatible_provider(handler)
+    with pytest.raises(DomainError):
+        generate(
+            provider,
+            "extract",
+            {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+            Extraction,
+        )
+    assert call_count == 1
+
+
+def test_finish_reason_failure_does_not_retry(monkeypatch):
+    """Finish-reason failure (e.g. 'length') must not retry."""
+    _no_sleep(monkeypatch)
+    call_count = 0
+
+    def handler(request: httpx.Request):
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(
+            200,
+            json={
+                "id": "req-test",
+                "choices": [{"finish_reason": "length", "message": {"content": "{}"}}],
+                "usage": {"total_tokens": 1},
+            },
+        )
+
+    provider = _compatible_provider(handler)
+    with pytest.raises(DomainError):
+        generate(
+            provider,
+            "extract",
+            {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+            Extraction,
+        )
+    assert call_count == 1
+
+
+def test_retry_failure_remains_sanitized(monkeypatch, capsys):
+    """A retried failure must not leak secrets, body content, or transcripts."""
+    _no_sleep(monkeypatch)
+    monkeypatch.setenv("HARVEST_LLM_DEBUG_ERRORS", "1")
+    call_count = 0
+
+    def handler(request: httpx.Request):
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(503, json={"error": "secret-key-leaked-12345"})
+
+    provider = _compatible_provider(handler)
+    with pytest.raises(DomainError) as exc:
+        generate(
+            provider,
+            "extract",
+            {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+            Extraction,
+        )
+    assert exc.value.code == "LLM_UNAVAILABLE"
+    captured = capsys.readouterr()
+    # Debug output must show status and attempt but never the body
+    assert "LLM_DEBUG stage=http status=503" in captured.err
+    assert "attempt=1" in captured.err
+    assert "secret-key-leaked-12345" not in captured.err
+    assert "novel text" not in captured.err
+
+
+def test_retry_success_no_debug_output(monkeypatch, capsys):
+    """A successful retry (after one transient failure) must not emit debug."""
+    _no_sleep(monkeypatch)
+    monkeypatch.setenv("HARVEST_LLM_DEBUG_ERRORS", "1")
+    call_count = 0
+
+    def handler(request: httpx.Request):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise httpx.ReadTimeout("transient")
+        return _mock_chat_response(_valid_extraction_json())
+
+    provider = _compatible_provider(handler)
+    generate(
+        provider,
+        "extract",
+        {"capture": {"transcript": "novel text", "domain": "Asset Operations", "synthetic": False}},
+        Extraction,
+    )
+    captured = capsys.readouterr()
+    # The retry debug (attempt=1) IS emitted for the transient failure
+    assert "attempt=1" in captured.err
+    # But no final/failure debug should appear since the retry succeeded
+    assert "attempt=final" not in captured.err
+
+
+# ---------------------------------------------------------------------------
+# Timeout configuration
+# ---------------------------------------------------------------------------
+
+
+def test_timeout_default_is_60_seconds():
+    """The default timeout must be 60 seconds for live reliability."""
+    settings = Settings(provider="tencent", model="m", api_key="k")
+    assert settings.timeout == 60
+
+
+def test_timeout_is_env_driven():
+    """HARVEST_LLM_TIMEOUT must override the default."""
+    import os
+
+    old = os.environ.get("HARVEST_LLM_TIMEOUT")
+    os.environ["HARVEST_LLM_TIMEOUT"] = "90"
+    try:
+        settings = Settings.from_env()
+        assert settings.timeout == 90
+    finally:
+        if old is not None:
+            os.environ["HARVEST_LLM_TIMEOUT"] = old
+        else:
+            os.environ.pop("HARVEST_LLM_TIMEOUT", None)
+
+
+def test_timeout_passed_to_httpx_client():
+    """The configured timeout must be passed to the httpx.Client."""
+    seen_timeouts = []
+
+    def handler(request: httpx.Request):
+        return _mock_chat_response({"summary": "ok", "uncertainty": "none"})
+
+    provider = CompatibleProvider(
+        Settings(provider="tencent", model="test", api_key="test", timeout=42),
+        transport=httpx.MockTransport(handler),
+    )
+    # Monkeypatch httpx.Client to capture the timeout kwarg
+    original_client = httpx.Client
+
+    class CapturingClient(original_client):
+        def __init__(self, **kwargs):
+            seen_timeouts.append(kwargs.get("timeout"))
+            super().__init__(**kwargs)
+
+    import harvest.providers
+
+    original = harvest.providers.httpx.Client
+    harvest.providers.httpx.Client = CapturingClient
+    try:
+        generate(provider, "explain", {"result": {}}, Explanation)
+    finally:
+        harvest.providers.httpx.Client = original
+    assert seen_timeouts[0] == 42
+
+
+def test_mock_provider_unaffected_by_timeout(monkeypatch):
+    """Mock provider must never touch HTTP — timeout is irrelevant."""
+    settings = Settings(provider="mock")
+    assert settings.timeout == 60  # default changed, but mock doesn't use it
+    from harvest.providers import MockProvider
+
+    mock = MockProvider()
+    # Must work regardless of timeout setting
+    data, meta = mock.structured_generate(
+        "explain", {"result": {"decision": "ESCALATE", "blocked_actions": []}}, {}
+    )
+    assert data["summary"]
+    assert meta["provider"] == "mock"

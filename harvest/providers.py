@@ -49,18 +49,6 @@ def _is_openai(base_url: str) -> bool:
     return "api.openai.com" in base_url
 
 
-def _structured_outputs_response_format(operation: str, schema: dict) -> dict:
-    """Build an OpenAI Structured Outputs response_format dict."""
-    return {
-        "type": "json_schema",
-        "json_schema": {
-            "name": f"sifu_{operation}",
-            "strict": True,
-            "schema": schema,
-        },
-    }
-
-
 class MockProvider:
     """Honest fixture replay, not a language-understanding fallback."""
 
@@ -128,10 +116,13 @@ class CompatibleProvider:
             ],
         }
         if _is_openai(self.settings.base_url):
-            # OpenAI Structured Outputs: enforce the supplied Pydantic schema
-            # server-side with strict mode. This replaces json_object mode for
-            # api.openai.com endpoints.
-            body["response_format"] = _structured_outputs_response_format(operation, schema)
+            # OpenAI and Tencent/compatible endpoints both use json_object mode.
+            # The Pydantic JSON schema is embedded in the system prompt above;
+            # every model result is validated locally with Pydantic in generate().
+            # Structured Outputs (json_schema + strict) is not used because OpenAI
+            # strict mode supports only a subset of JSON Schema and our Pydantic
+            # schemas are not guaranteed to be directly accepted.
+            body["response_format"] = {"type": "json_object"}
             # OpenAI's latest models (e.g. gpt-6.1-terra) reject max_tokens and
             # require max_completion_tokens.
             body["max_completion_tokens"] = 8000

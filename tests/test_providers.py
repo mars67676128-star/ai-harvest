@@ -1310,7 +1310,7 @@ def test_tenant_transcript_states_completeness():
 
 
 # ---------------------------------------------------------------------------
-# OpenAI Structured Outputs: json_schema + strict: true
+# OpenAI response_format: json_object (Structured Outputs rolled back)
 # ---------------------------------------------------------------------------
 
 
@@ -1326,9 +1326,10 @@ def _openai_provider(handler) -> CompatibleProvider:
     )
 
 
-def test_openai_uses_structured_outputs_json_schema():
-    """OpenAI requests must use response_format.type=json_schema (Structured
-    Outputs), not json_object."""
+def test_openai_uses_json_object_response_format():
+    """OpenAI requests must use response_format.type=json_object, not
+    json_schema (Structured Outputs rolled back due to strict-mode
+    incompatibility with Pydantic schemas)."""
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request):
@@ -1344,12 +1345,29 @@ def test_openai_uses_structured_outputs_json_schema():
     )
     assert len(seen) == 1
     body = json.loads(seen[0].content)
-    assert body["response_format"]["type"] == "json_schema"
-    assert body["response_format"]["json_schema"]["strict"] is True
+    assert body["response_format"] == {"type": "json_object"}
+    assert "json_schema" not in body["response_format"]
 
 
-def test_openai_structured_outputs_passes_supplied_schema():
-    """The actual Pydantic JSON schema must be passed inside response_format."""
+def test_openai_json_object_no_structured_outputs_key():
+    """OpenAI response_format must not contain json_schema or strict keys."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request):
+        seen.append(request)
+        return _mock_chat_response({"summary": "ok", "uncertainty": "none"})
+
+    provider = _openai_provider(handler)
+    generate(provider, "explain", {"result": {}}, Explanation)
+    body = json.loads(seen[0].content)
+    assert "json_schema" not in body["response_format"]
+    assert "strict" not in body["response_format"]
+    assert body["response_format"] == {"type": "json_object"}
+
+
+def test_openai_embeds_schema_in_system_prompt():
+    """The Pydantic JSON schema must still be embedded in the system prompt
+    for the model to follow, even though Structured Outputs is not used."""
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request):
@@ -1364,32 +1382,76 @@ def test_openai_structured_outputs_passes_supplied_schema():
         Extraction,
     )
     body = json.loads(seen[0].content)
-    schema = body["response_format"]["json_schema"]["schema"]
-    # The supplied schema must be the Extraction model's JSON schema
-    expected = Extraction.model_json_schema()
-    assert schema == expected
-    # Must contain key properties from the Pydantic model
-    assert "properties" in schema
-    assert "content" in schema["properties"]
+    system_content = body["messages"][0]["content"]
+    assert "JSON schema" in system_content
+    assert "content" in system_content  # schema properties present in prompt
 
 
-def test_openai_structured_outputs_schema_name_is_deterministic():
-    """The schema name must be deterministic and based on the operation."""
+def test_openai_uses_max_completion_tokens():
+    """OpenAI requests must use max_completion_tokens, not max_tokens."""
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request):
         seen.append(request)
-        return _mock_chat_response({"summary": "ok", "uncertainty": "none"})
+        return _mock_chat_response(_valid_extraction_json())
 
     provider = _openai_provider(handler)
-    generate(provider, "explain", {"result": {}}, Explanation)
+    generate(
+        provider,
+        "extract",
+        {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+        Extraction,
+    )
     body = json.loads(seen[0].content)
-    assert body["response_format"]["json_schema"]["name"] == "sifu_explain"
+    assert body["max_completion_tokens"] == 8000
+    assert "max_tokens" not in body
+
+
+def test_openai_sets_reasoning_effort_none():
+    """OpenAI reasoning models must have reasoning_effort set to none."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request):
+        seen.append(request)
+        return _mock_chat_response(_valid_extraction_json())
+
+    provider = _openai_provider(handler)
+    generate(
+        provider,
+        "extract",
+        {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+        Extraction,
+    )
+    body = json.loads(seen[0].content)
+    assert body["reasoning_effort"] == "none"
+
+
+def test_openai_result_still_validated_locally():
+    """Even without Structured Outputs, model output must be validated by
+    Pydantic — a schema-invalid response must fail safely."""
+    bad_payload = {
+        "summary": "Missing content fields",
+        "elicitation_gaps": [],
+        "content": {"name": "Incomplete", "domain": "Asset Operations"},
+    }
+
+    def handler(request: httpx.Request):
+        return _mock_chat_response(bad_payload)
+
+    provider = _openai_provider(handler)
+    with pytest.raises(DomainError) as exc:
+        generate(
+            provider,
+            "extract",
+            {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+            Extraction,
+        )
+    assert exc.value.code == "LLM_UNAVAILABLE"
 
 
 def test_tencent_remains_on_json_object():
     """Tencent and other non-OpenAI compatible endpoints must stay on
-    json_object mode, not json_schema."""
+    json_object mode."""
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request):

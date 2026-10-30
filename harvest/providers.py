@@ -2,11 +2,13 @@
 
 import hashlib
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Protocol
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from .config import Settings
 from .demo_corrections import BACKFLOW_REVISED_TEXT
@@ -128,7 +130,7 @@ class CompatibleProvider:
             body = response.json()
             choice = body["choices"][0]
             if choice.get("finish_reason") != "stop":
-                raise ValueError("Incomplete model response")
+                raise ValueError(f"finish_reason={choice.get('finish_reason')}")
             content = choice["message"]["content"]
             if len(content) > 150000:
                 raise ValueError("Model response exceeds size limit")
@@ -148,6 +150,43 @@ def make_provider(settings):
     return MockProvider() if settings.provider == "mock" else CompatibleProvider(settings)
 
 
+def _debug_enabled():
+    return os.getenv("HARVEST_LLM_DEBUG_ERRORS") == "1"
+
+
+def _emit_debug(exc):
+    """Print sanitized failure-stage diagnostics to stderr.
+
+    Never emits API keys, submitted payloads, response bodies, or model-generated
+    content. Only structural metadata (stage, HTTP status, finish reason, Pydantic
+    error loc/type) is printed.
+    """
+    # HTTP/provider rejection — print status code only, never the response body.
+    if isinstance(exc, httpx.HTTPStatusError):
+        print(f"LLM_DEBUG stage=http status={exc.response.status_code}", file=sys.stderr)
+        return
+    # Pydantic schema validation — print loc and type only, never input values.
+    if isinstance(exc, ValidationError):
+        errors = exc.errors()
+        print(f"LLM_DEBUG stage=validation error_count={len(errors)}", file=sys.stderr)
+        for e in errors:
+            loc = ".".join(str(p) for p in e.get("loc", ()))
+            etype = e.get("type", "unknown")
+            print(f"LLM_DEBUG loc={loc} type={etype}", file=sys.stderr)
+        return
+    # JSON parsing failure — print marker only, never raw content.
+    if isinstance(exc, json.JSONDecodeError):
+        print("LLM_DEBUG stage=invalid_json", file=sys.stderr)
+        return
+    # Finish-reason failure — the ValueError message carries the reason.
+    if isinstance(exc, ValueError) and str(exc).startswith("finish_reason="):
+        reason = str(exc).split("=", 1)[1]
+        print(f"LLM_DEBUG stage=finish_reason reason={reason}", file=sys.stderr)
+        return
+    # Unexpected exception — print class name only.
+    print(f"LLM_DEBUG stage=unexpected error_class={type(exc).__name__}", file=sys.stderr)
+
+
 def generate(provider: LLMProvider, operation: str, payload: dict, output: type[BaseModel]):
     try:
         data, meta = provider.structured_generate(operation, payload, output.model_json_schema())
@@ -155,6 +194,8 @@ def generate(provider: LLMProvider, operation: str, payload: dict, output: type[
     except DomainError:
         raise
     except Exception as exc:
+        if _debug_enabled():
+            _emit_debug(exc)
         # Provider bodies may contain secrets or submitted text; do not echo them.
         raise DomainError(
             502,

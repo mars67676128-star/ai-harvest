@@ -648,3 +648,130 @@ def test_tencent_base_url_uses_max_tokens():
     assert body["max_tokens"] == 8000
     assert "max_completion_tokens" not in body
     assert "reasoning_effort" not in body
+
+
+# ---------------------------------------------------------------------------
+# Safe diagnostic mode (HARVEST_LLM_DEBUG_ERRORS=1)
+# ---------------------------------------------------------------------------
+
+
+def test_diagnostics_off_by_default(monkeypatch, capsys):
+    """When HARVEST_LLM_DEBUG_ERRORS is not set, no diagnostic output is emitted
+    and the public DomainError remains the same generic 502."""
+    monkeypatch.delenv("HARVEST_LLM_DEBUG_ERRORS", raising=False)
+    provider = _compatible_provider(lambda req: httpx.Response(400, json={"error": "bad request"}))
+    with pytest.raises(DomainError) as exc:
+        generate(
+            provider,
+            "extract",
+            {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+            Extraction,
+        )
+    assert exc.value.code == "LLM_UNAVAILABLE"
+    assert exc.value.status == 502
+    captured = capsys.readouterr()
+    assert "LLM_DEBUG" not in captured.err
+    assert "LLM_DEBUG" not in captured.out
+
+
+def test_http_diagnostic_emits_status_only(monkeypatch, capsys):
+    """HTTP rejection must print status code only — never the response body."""
+    monkeypatch.setenv("HARVEST_LLM_DEBUG_ERRORS", "1")
+    sensitive_body = {"error": "secret-key-12345 is invalid"}
+    provider = _compatible_provider(lambda req: httpx.Response(401, json=sensitive_body))
+    with pytest.raises(DomainError) as exc:
+        generate(
+            provider,
+            "extract",
+            {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+            Extraction,
+        )
+    assert exc.value.code == "LLM_UNAVAILABLE"
+    assert exc.value.status == 502
+    captured = capsys.readouterr()
+    assert "LLM_DEBUG stage=http status=401" in captured.err
+    # Response body must never appear in diagnostic output
+    assert "secret-key-12345" not in captured.err
+    assert "bad request" not in captured.err
+
+
+def test_finish_reason_diagnostic(monkeypatch, capsys):
+    """Finish-reason failure must print the reason (e.g. length, content_filter)."""
+    monkeypatch.setenv("HARVEST_LLM_DEBUG_ERRORS", "1")
+    # Build the raw HTTP response directly — the content doesn't matter because
+    # the provider checks finish_reason before parsing content.
+    raw_response = httpx.Response(
+        200,
+        json={
+            "id": "req-test",
+            "choices": [{"finish_reason": "length", "message": {"content": "{}"}}],
+            "usage": {"total_tokens": 1},
+        },
+    )
+    provider = _compatible_provider(lambda req: raw_response)
+    with pytest.raises(DomainError) as exc:
+        generate(
+            provider,
+            "extract",
+            {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+            Extraction,
+        )
+    assert exc.value.code == "LLM_UNAVAILABLE"
+    captured = capsys.readouterr()
+    assert "LLM_DEBUG stage=finish_reason reason=length" in captured.err
+
+
+def test_json_parse_diagnostic(monkeypatch, capsys):
+    """JSON parsing failure must print invalid_json — never raw model content."""
+    monkeypatch.setenv("HARVEST_LLM_DEBUG_ERRORS", "1")
+    raw_response = httpx.Response(
+        200,
+        json={
+            "id": "req-test",
+            "choices": [
+                {"finish_reason": "stop", "message": {"content": "not valid json at all"}},
+            ],
+            "usage": {"total_tokens": 1},
+        },
+    )
+    provider = _compatible_provider(lambda req: raw_response)
+    with pytest.raises(DomainError) as exc:
+        generate(
+            provider,
+            "extract",
+            {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+            Extraction,
+        )
+    assert exc.value.code == "LLM_UNAVAILABLE"
+    captured = capsys.readouterr()
+    assert "LLM_DEBUG stage=invalid_json" in captured.err
+    # Raw model content must never appear in diagnostic output
+    assert "not valid json at all" not in captured.err
+
+
+def test_validation_diagnostic_excludes_input_values(monkeypatch, capsys):
+    """Pydantic validation failure must print loc and type only — never the
+    rejected input values or model-generated content."""
+    monkeypatch.setenv("HARVEST_LLM_DEBUG_ERRORS", "1")
+    bad_payload = {
+        "summary": "Missing content fields",
+        "elicitation_gaps": [],
+        "content": {"name": "Incomplete", "domain": "Asset Operations"},
+    }
+    provider = _compatible_provider(lambda req: _mock_chat_response(bad_payload))
+    with pytest.raises(DomainError) as exc:
+        generate(
+            provider,
+            "extract",
+            {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+            Extraction,
+        )
+    assert exc.value.code == "LLM_UNAVAILABLE"
+    captured = capsys.readouterr()
+    assert "LLM_DEBUG stage=validation" in captured.err
+    # loc and type are printed, but never the input value
+    assert "loc=" in captured.err
+    assert "type=" in captured.err
+    # Model-generated content must never appear in diagnostic output
+    assert "Incomplete" not in captured.err
+    assert "Missing content fields" not in captured.err

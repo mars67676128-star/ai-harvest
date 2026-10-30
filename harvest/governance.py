@@ -2,6 +2,7 @@
 
 import json
 
+from .acceptance import registered_pill_ids, run_acceptance
 from .db import Database, audit, digest, dump, now_iso, pill_from_row
 from .engine import run_evaluations
 from .errors import DomainError
@@ -367,8 +368,13 @@ class Governance:
                     (dump(review), pill_id, version),
                 )
             elif operation == "validate":
+                acceptance = run_acceptance(content, pill_id)
                 report = {
                     **run_evaluations(content),
+                    "acceptance": {
+                        "passed": acceptance.passed,
+                        "results": acceptance.results,
+                    },
                     "content_hash": pill["content_hash"],
                     "actor": actor.id,
                     "at": now_iso(),
@@ -398,6 +404,25 @@ class Governance:
                     raise DomainError(
                         409, "EVALUATION_FAILED", "Release-time regression evaluation failed"
                     )
+                # Server-owned semantic regression gate: verify that the
+                # candidate's deterministic rules preserve explicit source-
+                # grounded behaviour, independent of the model's own evaluation
+                # cases.  Only registered (demo) pills are checked; unregistered
+                # pills skip this gate until acceptance cases are registered.
+                if pill_id in registered_pill_ids():
+                    acceptance = run_acceptance(content, pill_id)
+                    if not acceptance.passed:
+                        raise DomainError(
+                            409,
+                            "SEMANTIC_REGRESSION",
+                            "Candidate rules failed one or more source-grounded acceptance cases",
+                            details={
+                                "pill_id": pill_id,
+                                "failed_cases": [
+                                    r["case_id"] for r in acceptance.results if not r["passed"]
+                                ],
+                            },
+                        )
                 if pill["previous_version"]:
                     check_inherited_evaluations(con, content, pill["previous_version"], pill_id)
                 req = CreatePill.model_validate({k: pill[k] for k in CreatePill.model_fields})

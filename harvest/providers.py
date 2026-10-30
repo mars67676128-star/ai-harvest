@@ -110,6 +110,10 @@ class CompatibleProvider:
         }
         if "api.openai.com" in self.settings.base_url:
             body["max_completion_tokens"] = 8000
+            # gpt-6.1-terra is a reasoning model that defaults to medium effort.
+            # Sifu does schema-driven extraction — spend the completion budget on
+            # the JSON result, not reasoning tokens.
+            body["reasoning_effort"] = "none"
         else:
             body["max_tokens"] = 8000
         with httpx.Client(

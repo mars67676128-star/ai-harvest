@@ -563,7 +563,7 @@ def test_incomplete_interview_fabricated_output_still_non_authoritative(client):
 
 
 # ---------------------------------------------------------------------------
-# OpenAI max_completion_tokens compatibility patch
+# OpenAI max_completion_tokens + reasoning_effort compatibility patch
 # ---------------------------------------------------------------------------
 
 
@@ -597,9 +597,39 @@ def test_openai_base_url_uses_max_completion_tokens():
     assert "max_tokens" not in body
 
 
+def test_openai_request_includes_reasoning_effort_none():
+    """gpt-6.1-terra is a reasoning model that defaults to medium effort. Sifu
+    does schema-driven extraction, so the request must set reasoning_effort to
+    "none" to spend the completion budget on the JSON result."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request):
+        seen.append(request)
+        return _mock_chat_response(_valid_extraction_json())
+
+    provider = CompatibleProvider(
+        Settings(
+            provider="compatible",
+            model="gpt-6.1-terra",
+            api_key="sk-test",
+            base_url="https://api.openai.com/v1",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+    generate(
+        provider,
+        "extract",
+        {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+        Extraction,
+    )
+    assert len(seen) == 1
+    body = json.loads(seen[0].content)
+    assert body["reasoning_effort"] == "none"
+
+
 def test_tencent_base_url_uses_max_tokens():
     """Tencent and other OpenAI-compatible endpoints use max_tokens. The provider
-    must send max_tokens and must NOT send max_completion_tokens."""
+    must send max_tokens and must NOT send max_completion_tokens or reasoning_effort."""
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request):
@@ -617,3 +647,4 @@ def test_tencent_base_url_uses_max_tokens():
     body = json.loads(seen[0].content)
     assert body["max_tokens"] == 8000
     assert "max_completion_tokens" not in body
+    assert "reasoning_effort" not in body

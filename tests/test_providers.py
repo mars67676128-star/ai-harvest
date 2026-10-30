@@ -272,7 +272,12 @@ def test_live_provider_request_construction_for_extraction():
         return _mock_chat_response(_valid_extraction_json())
 
     provider = _compatible_provider(handler)
-    generate(provider, "extract", {"capture": {"transcript": "novel text", "domain": "Asset Operations"}}, Extraction)
+    generate(
+        provider,
+        "extract",
+        {"capture": {"transcript": "novel text", "domain": "Asset Operations"}},
+        Extraction,
+    )
     assert len(seen) == 1
     req = seen[0]
     assert str(req.url) == "https://tokenhub-intl.tencentcloudmaas.com/v1/chat/completions"

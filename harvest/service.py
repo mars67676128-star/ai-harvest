@@ -479,6 +479,64 @@ class Service:
             )
             return candidate
 
+    def scripted_correction(
+        self,
+        pill_id: str,
+        version: str,
+        content: PillContent,
+        ai_draft_version: str,
+        failed_cases: list[str],
+        actor: Actor,
+    ):
+        """Create a corrected DRAFT pill from explicit source-grounded content.
+
+        This method is used by the synthetic demo orchestration to simulate a
+        human reviewer correcting an AI draft that failed semantic acceptance.
+        It is NOT called automatically for real candidates — real users receive
+        failed validation/gaps for human resolution.
+
+        Provenance is recorded in:
+        - ``change_reason`` on the pill version
+        - a ``SCRIPTED_REVIEWER_CORRECTION`` audit event linking AI draft and
+          failed case IDs
+        - the content itself is labelled ``synthetic: True``
+
+        The corrected DRAFT still goes through the full governance release
+        cycle (submit, review, validate, approve) — no gate is bypassed.
+        """
+        require_role(actor, "expert")
+        content.synthetic = True
+        req = CreatePill(
+            pill_id=pill_id,
+            version=version,
+            owner="approver",
+            reviewers=["reviewer"],
+            content=content,
+            previous_version=None,
+            change_reason=(
+                f"SCRIPTED SYNTHETIC HUMAN CORRECTION from labelled expert evidence. "
+                f"AI draft v{ai_draft_version} failed semantic acceptance: "
+                f"{', '.join(failed_cases)}"
+            ),
+        )
+        validate_governance_authority(req, actor, self.known_actors)
+        with self.db.transaction() as con:
+            candidate = insert_pill(con, req, actor)
+            audit(
+                con,
+                "SCRIPTED_REVIEWER_CORRECTION",
+                pill_id,
+                actor.id,
+                {
+                    "corrected_version": version,
+                    "ai_draft_version": ai_draft_version,
+                    "failed_cases": failed_cases,
+                    "source": "labelled synthetic expert evidence fixture",
+                    "synthetic": True,
+                },
+            )
+            return candidate
+
     def dashboard(self):
         with self.db.connection() as con:
             states = {

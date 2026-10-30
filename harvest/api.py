@@ -13,10 +13,11 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.exceptions import HTTPException
 
+from .acceptance import registered_pill_ids
 from .config import Settings
 from .db import Database
 from .errors import DomainError
-from .fixtures import ELICITATION
+from .fixtures import ELICITATION, OPS_ID, TENANT_ID, operations_content, tenant_content
 from .governance import require_role
 from .models import (
     Actor,
@@ -24,6 +25,7 @@ from .models import (
     CaseInput,
     CaseRecord,
     CompileRequest,
+    CorrectionRequest,
     CreatePill,
     ErrorEnvelope,
     Feedback,
@@ -284,6 +286,52 @@ def create_app(settings: Settings | None = None, provider=None):
     )
     def propose(feedback_id: str, actor: CurrentActor):
         return service.propose(feedback_id, actor)
+
+    @app.post(
+        prefix + "/pills/{pill_id}/versions/{version}/correct",
+        response_model=PillVersion,
+        status_code=201,
+        tags=["governance"],
+    )
+    def correct(pill_id: str, version: str, body: CorrectionRequest, actor: CurrentActor):
+        """Scripted synthetic reviewer correction (demo only).
+
+        Creates a corrected DRAFT from explicit source-grounded fixture content
+        after an AI draft failed semantic acceptance.  Real/non-synthetic
+        candidates are never auto-corrected; this endpoint only works for
+        registered demo pill IDs and uses fixture content, not AI output.
+        """
+        if pill_id not in registered_pill_ids():
+            raise DomainError(
+                422,
+                "CORRECTION_NOT_AVAILABLE",
+                "Scripted correction is only available for registered demo pills",
+            )
+        if body.pill_id != pill_id or body.version != version:
+            raise DomainError(
+                422,
+                "VALIDATION_ERROR",
+                "Path and body identifiers must match",
+            )
+        fixture_content = {
+            OPS_ID: operations_content,
+            TENANT_ID: tenant_content,
+        }
+        if pill_id not in fixture_content:
+            raise DomainError(
+                422,
+                "CORRECTION_NOT_AVAILABLE",
+                "No source-grounded fixture content for this pill",
+            )
+        content = fixture_content[pill_id]()
+        return service.scripted_correction(
+            pill_id,
+            version,
+            content,
+            body.ai_draft_version,
+            body.failed_cases,
+            actor,
+        )
 
     @app.get(prefix + "/feedback/{feedback_id}", tags=["learning"])
     def get_feedback(feedback_id: str, actor: CurrentActor):

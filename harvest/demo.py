@@ -51,7 +51,120 @@ def release(client, pill_id, version):
     return result
 
 
-def seed(client):
+def check_acceptance(client, pill_id, version):
+    """Submit, review, and validate a candidate; return acceptance result.
+
+    Does NOT approve. Returns (validation_response, acceptance_result) where
+    acceptance_result is None if the validate step failed before reaching
+    acceptance checks.
+    """
+    path = f"/pills/{pill_id}/versions/{version}"
+    call(client, "POST", f"{path}/submit", "expert", {"note": "SYNTHETIC scripted submit"})
+    call(client, "POST", f"{path}/review", "reviewer", {"note": "SYNTHETIC scripted review"})
+    result = call(
+        client, "POST", f"{path}/validate", "reviewer", {"note": "SYNTHETIC scripted validate"}
+    )
+    acceptance = result.get("validation", {}).get("acceptance", {})
+    return result, acceptance
+
+
+def release_with_correction(client, pill_id, version, domain):
+    """Release a pill, applying scripted reviewer correction if acceptance fails.
+
+    This flow is used for live extractions where the AI draft may drift from
+    source-grounded behaviour:
+
+    1. Submit + review + validate the AI draft
+    2. Check semantic acceptance
+    3. If FAILED: create a scripted corrected DRAFT from labelled synthetic
+       expert evidence, then release the corrected version
+    4. If PASSED: release the original AI draft normally
+
+    The correction is explicit and auditable — never a silent replacement.
+    """
+    validation, acceptance = check_acceptance(client, pill_id, version)
+
+    if acceptance.get("passed", True):
+        # Acceptance passed — approve the AI draft normally.
+        result = call(
+            client,
+            "POST",
+            f"/pills/{pill_id}/versions/{version}/approve",
+            "approver",
+            {
+                "note": "SYNTHETIC scripted approve; demo role simulation, not qualified field approval."
+            },
+        )
+        return {
+            "approved": result,
+            "ai_draft_version": version,
+            "corrected": False,
+            "semantic_acceptance": acceptance,
+        }
+
+    # Semantic acceptance FAILED — do NOT abort.
+    failed_cases = [r["case_id"] for r in acceptance.get("results", []) if not r["passed"]]
+    print(f"  Semantic acceptance: FAILED [{', '.join(failed_cases)}]")
+    print(f"  Live AI draft v{version} retained as unapproved for provenance.")
+
+    # Scripted reviewer correction from labelled synthetic expert evidence.
+    corrected_version = bump_version(version)
+    correction = call(
+        client,
+        "POST",
+        f"/pills/{pill_id}/versions/{corrected_version}/correct",
+        "expert",
+        {
+            "pill_id": pill_id,
+            "version": corrected_version,
+            "ai_draft_version": version,
+            "failed_cases": failed_cases,
+        },
+    )
+    print(
+        f"  Scripted reviewer corrected candidate v{corrected_version} "
+        f"from labelled synthetic expert evidence"
+    )
+    print(f"  AI draft v{version} → corrected v{corrected_version}; provenance recorded in audit.")
+
+    # Revalidate the corrected candidate.
+    corrected_validation, corrected_acceptance = check_acceptance(
+        client, pill_id, corrected_version
+    )
+    if not corrected_acceptance.get("passed", False):
+        raise RuntimeError(
+            f"Corrected candidate v{corrected_version} still fails semantic acceptance: "
+            f"{[r['case_id'] for r in corrected_acceptance.get('results', []) if not r['passed']]}"
+        )
+    print("  Semantic acceptance: PASSED")
+
+    result = call(
+        client,
+        "POST",
+        f"/pills/{pill_id}/versions/{corrected_version}/approve",
+        "approver",
+        {"note": "SYNTHETIC scripted approve; demo role simulation, not qualified field approval."},
+    )
+    return {
+        "approved": result,
+        "ai_draft_version": version,
+        "ai_draft_failed_cases": failed_cases,
+        "corrected": True,
+        "corrected_version": corrected_version,
+        "ai_draft_validation": validation.get("validation", {}),
+        "corrected_validation": corrected_validation.get("validation", {}),
+        "semantic_acceptance": corrected_acceptance,
+        "correction_audit": correction,
+    }
+
+
+def bump_version(version: str) -> str:
+    """Bump the patch component of a semver string."""
+    major, minor, patch = version.split(".")
+    return f"{major}.{minor}.{int(patch) + 1}"
+
+
+def seed(client, live=False):
     output = []
     existing = call(client, "GET", "/pills")
     for pill_id, transcript, domain in [
@@ -77,17 +190,40 @@ def seed(client):
         draft = call(
             client, "POST", f"/captures/{capture['id']}/compile", "expert", {"pill_id": pill_id}
         )
-        approved = release(client, pill_id, "1.0.0")
+        if live:
+            print(f"  Live AI draft compiled for {pill_id} v1.0.0")
+            approved = release_with_correction(client, pill_id, "1.0.0", domain)
+            if approved["corrected"]:
+                print(
+                    f"  Reviewed > tested > APPROVED {pill_id} v{approved['corrected_version']} "
+                    f"(corrected from AI draft v{approved['ai_draft_version']})"
+                )
+            else:
+                print(
+                    f"  Reviewed > tested > APPROVED {pill_id} v1.0.0 (AI draft passed acceptance)"
+                )
+        else:
+            approved = release(client, pill_id, "1.0.0")
+            print(
+                f"  Captured > extracted > compiled > reviewed > tested > APPROVED {pill_id} v1.0.0"
+            )
         output.append(
             {"capture": capture, "extraction": extraction, "draft": draft, "approved": approved}
         )
-        print(f"  Captured > extracted > compiled > reviewed > tested > APPROVED {pill_id} v1.0.0")
     return output
 
 
-def run(client, seed_only=False):
-    print("AI HARVEST | SYNTHETIC DEMO | scripted human roles | no building actions executed")
-    report = {"synthetic": True, "human_roles_simulated": True, "seed": seed(client)}
+def run(client, seed_only=False, live=False):
+    if live:
+        print("AI HARVEST | LIVE DEMO | real AI extraction + deterministic governance")
+    else:
+        print("AI HARVEST | SYNTHETIC DEMO | scripted human roles | no building actions executed")
+    report = {
+        "synthetic": True,
+        "human_roles_simulated": True,
+        "live": live,
+        "seed": seed(client, live),
+    }
     if seed_only:
         return report
     case = call(client, "POST", "/cases", "operator", demo_case().model_dump(mode="json"))
@@ -119,7 +255,11 @@ def run(client, seed_only=False):
             "synthetic": True,
         },
     )
-    original = call(client, "GET", f"/pills/{OPS_ID}/versions/1.0.0")
+    # Find the approved OPS version (may differ in live mode after correction).
+    ops_versions = call(client, "GET", f"/pills/{OPS_ID}/versions")
+    ops_approved = next(v for v in ops_versions if v["status"] == "APPROVED")
+    ops_approved_version = ops_approved["version"]
+    original = call(client, "GET", f"/pills/{OPS_ID}/versions/{ops_approved_version}")
     feedback = call(
         client,
         "POST",
@@ -128,13 +268,19 @@ def run(client, seed_only=False):
         {"pill_id": OPS_ID, "correction": BACKFLOW_TEXT, "proposed_version": "1.1.0"},
     )
     candidate = call(client, "POST", f"/feedback/{feedback['id']}/propose", "expert")
-    unchanged = call(client, "GET", f"/pills/{OPS_ID}/versions/1.0.0")
+    unchanged = call(client, "GET", f"/pills/{OPS_ID}/versions/{ops_approved_version}")
     assert (
         original["content_hash"] == unchanged["content_hash"] and unchanged["status"] == "APPROVED"
     )
-    print("  Feedback created DRAFT v1.1.0. Approved v1.0.0 content and hash remain unchanged.")
+    print(
+        f"  Feedback created DRAFT v1.1.0. Approved {OPS_ID} v{ops_approved_version} "
+        f"content and hash remain unchanged."
+    )
     diff = call(
-        client, "GET", f"/pills/{OPS_ID}/diff?from_version=1.0.0&to_version=1.1.0", "expert"
+        client,
+        "GET",
+        f"/pills/{OPS_ID}/diff?from_version={ops_approved_version}&to_version=1.1.0",
+        "expert",
     )
     print("  Reviewable changes: " + ", ".join(c["path"] for c in diff["changes"]))
     # The same flat-trend/backflow observation has different governed behaviour across releases.
@@ -155,7 +301,7 @@ def run(client, seed_only=False):
     assert (
         before["result"]["decision"] == "HUMAN_REVIEW" and after["result"]["decision"] == "ESCALATE"
     )
-    historical = call(client, "GET", f"/pills/{OPS_ID}/versions/1.0.0")
+    historical = call(client, "GET", f"/pills/{OPS_ID}/versions/{ops_approved_version}")
     assert (
         historical["status"] == "SUPERSEDED"
         and historical["content_hash"] == original["content_hash"]
@@ -202,7 +348,7 @@ def main():
     args = parser.parse_args()
     if args.url:
         with httpx.Client(base_url=args.url, timeout=120) as client:
-            report = run(client, args.seed_only)
+            report = run(client, args.seed_only, live=args.live)
     else:
         if args.live:
             settings = Settings.from_env()
@@ -215,7 +361,7 @@ def main():
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
         settings.database = args.database or f"artifacts/demo-{stamp}.db"
         with TestClient(create_app(settings)) as client:
-            report = run(client, args.seed_only)
+            report = run(client, args.seed_only, live=args.live)
         print(f"  Database: {settings.database}")
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)

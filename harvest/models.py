@@ -309,6 +309,19 @@ class CompileRequest(Model):
     reviewers: list[Identifier] = Field(default_factory=lambda: ["reviewer"], min_length=1)
 
 
+class CorrectionRequest(Model):
+    """Request to create a scripted reviewer correction from source-grounded content.
+
+    Used only in the synthetic demo orchestration to simulate a human reviewer
+    correcting an AI draft that failed semantic acceptance.
+    """
+
+    pill_id: Identifier
+    version: Version
+    ai_draft_version: Version
+    failed_cases: list[str] = Field(default_factory=list)
+
+
 class Extraction(Model):
     summary: Text
     elicitation_gaps: list[Text]

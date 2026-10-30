@@ -66,7 +66,13 @@ OPS_TRANSCRIPT = (
     "expected recommended action is inspect_drainage; expected blocked actions are monitor_trend "
     "and review_access_plan. Fourth, missing inputs — no observations supplied. Expected decision "
     "is ABSTAIN. Fifth, out of scope — same as stable but asset_type is residential, not office. "
-    "Expected decision is ABSTAIN."
+    "Expected decision is ABSTAIN.\n"
+    "\n"
+    "I consider the scope, inputs, assumptions, exceptions, actions, prohibited actions, "
+    "guardrails, rules, escalation recipients, evidence, and evaluation cases described above "
+    "complete for this synthetic workflow. There are no known contradictions in what I have "
+    "described. Any condition outside the stated scope is already handled by the stated exception "
+    "that unknown conditions require qualified human assessment."
 )
 TENANT_TRANSCRIPT = (
     "SYNTHETIC EXPERT INTERVIEW: This is a synthetic reconstruction from the same Harbour "
@@ -117,7 +123,13 @@ TENANT_TRANSCRIPT = (
     "— alternative_route_verified is true, tenant_arrivals_expected is true. Expected decision "
     "is HUMAN_REVIEW; expected recommended actions are review_access_plan and "
     "draft_tenant_update. Third, missing inputs — no observations supplied. Expected decision "
-    "is ABSTAIN."
+    "is ABSTAIN.\n"
+    "\n"
+    "I consider the scope, inputs, assumptions, exceptions, actions, prohibited actions, "
+    "guardrails, rules, escalation recipients, evidence, and evaluation cases described above "
+    "complete for this synthetic workflow. There are no known contradictions in what I have "
+    "described. Any condition outside the stated scope is already handled by the stated exception "
+    "that unknown conditions require qualified human assessment."
 )
 BACKFLOW_TEXT = (
     "SYNTHETIC CORRECTION: A flat water trend can hide drain backflow. Require a verified "

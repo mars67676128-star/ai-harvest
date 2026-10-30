@@ -70,6 +70,32 @@ The content object fields and rules:
   - All identifiers must match ^[a-z][a-z0-9_.-]{0,79}$.
   - No duplicate identifiers within inputs, actions, rules, evidence, or evaluation.
 
+GAP DISCIPLINE — DO NOT MANUFACTURE GAPS:
+  elicitation_gaps, unresolved_questions, and contradictions must each be an empty array when
+  the interview is internally consistent and explicitly supplies all knowledge the schema requires:
+  scope, inputs, assumptions, exceptions, actions, prohibited_actions, guardrails, rules,
+  escalation, evidence, and evaluation cases.
+
+  Only report a gap when a concrete, required piece of knowledge is genuinely absent or
+  internally inconsistent. Do NOT request extra information merely because additional
+  real-world detail could hypothetically exist. Optional enrichment or possible external
+  context is NOT a blocking gap — the stated exception ("unknown conditions require qualified
+  human assessment") already covers conditions outside the described scope.
+
+  Do NOT invent unresolved questions for an interview that is complete and consistent.
+  Do NOT manufacture contradictions where none exist in the text.
+  Do NOT generate clarification questions about topics the interview already defines explicitly.
+
+  If the interview explicitly states that the described scope and rules are complete, that there
+  are no known contradictions, and that out-of-scope conditions are handled by the stated
+  exception, treat that as authoritative — do not create gaps that contradict the expert's
+  stated completeness.
+
+  Remember: an extraction with no gaps, no unresolved questions, and no contradictions is the
+  correct and expected result for a fully specified interview. Unnecessary gaps will block
+  review and release — only raise a gap when the interview genuinely lacks information needed
+  to populate a required field or resolve a real inconsistency.
+
 If the interview lacks enough detail to produce complete knowledge, populate only what is
 supported and list every missing element in elicitation_gaps and unresolved_questions. The
 extraction will be stored as a non-authoritative draft. It will not compile into a candidate

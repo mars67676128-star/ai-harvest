@@ -1099,3 +1099,211 @@ def test_no_fabricated_threshold_absent_from_transcript():
                 assert value_str in OPS_TRANSCRIPT or (
                     c.value == 0 and "zero" in OPS_TRANSCRIPT.lower()
                 ), f"threshold {value_str} for {c.input} {c.op} absent from transcript"
+
+
+# ---------------------------------------------------------------------------
+# Gap discipline: complete interviews yield empty gaps; genuine gaps block review
+# ---------------------------------------------------------------------------
+
+
+def test_complete_transcript_yields_no_gaps_via_mock(client):
+    """The MockProvider fixture for a fully specified synthetic interview must
+    produce an extraction with empty elicitation_gaps, unresolved_questions,
+    and contradictions — the interview is internally consistent and complete."""
+    capture = call(
+        client,
+        "POST",
+        "/captures",
+        "expert",
+        {
+            "title": "Synthetic ops interview",
+            "domain": "Asset Operations",
+            "transcript": OPS_TRANSCRIPT,
+            "synthetic": True,
+        },
+    )
+    extraction = call(client, "POST", f"/captures/{capture['id']}/extract", "expert")
+    assert extraction["elicitation_gaps"] == []
+    assert extraction["content"]["unresolved_questions"] == []
+    assert extraction["content"]["contradictions"] == []
+
+
+def test_complete_transcript_compiles_and_passes_review(client):
+    """A complete extraction with no gaps must compile into a candidate Pill
+    and pass the review gate (no UNRESOLVED_KNOWLEDGE)."""
+    capture = call(
+        client,
+        "POST",
+        "/captures",
+        "expert",
+        {
+            "title": "Synthetic ops interview",
+            "domain": "Asset Operations",
+            "transcript": OPS_TRANSCRIPT,
+            "synthetic": True,
+        },
+    )
+    call(client, "POST", f"/captures/{capture['id']}/extract", "expert")
+    draft = call(
+        client,
+        "POST",
+        f"/captures/{capture['id']}/compile",
+        "expert",
+        {"pill_id": "test.review.ok"},
+    )
+    assert draft["status"] == "DRAFT"
+    # Review must succeed — no unresolved questions or contradictions
+    submitted = call(
+        client,
+        "POST",
+        "/pills/test.review.ok/versions/1.0.0/submit",
+        "expert",
+        {"note": "Synthetic: submit for review"},
+    )
+    assert submitted["status"] == "IN_REVIEW"
+    reviewed = call(
+        client,
+        "POST",
+        "/pills/test.review.ok/versions/1.0.0/review",
+        "reviewer",
+        {"note": "Synthetic: independent review passed"},
+    )
+    assert reviewed["review"] is not None
+
+
+def test_genuine_unresolved_questions_block_review(client):
+    """A Pill with unresolved_questions must fail review with UNRESOLVED_KNOWLEDGE.
+    This uses a direct create to inject unresolved questions."""
+    from harvest.fixtures import operations_content
+
+    content = operations_content().model_dump(mode="json")
+    content["unresolved_questions"] = ["What is the actual pump capacity threshold?"]
+    pill = call(
+        client,
+        "POST",
+        "/pills",
+        "expert",
+        {
+            "pill_id": "test.unresolved",
+            "version": "1.0.0",
+            "owner": "approver",
+            "reviewers": ["reviewer"],
+            "content": content,
+            "previous_version": None,
+            "change_reason": "Synthetic test with unresolved questions",
+        },
+    )
+    assert pill["status"] == "DRAFT"
+    call(
+        client,
+        "POST",
+        "/pills/test.unresolved/versions/1.0.0/submit",
+        "expert",
+        {"note": "Submit"},
+    )
+    response = client.post(
+        BASE + "/pills/test.unresolved/versions/1.0.0/review",
+        headers={"Authorization": "Bearer demo-reviewer"},
+        json={"note": "Try to review"},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "UNRESOLVED_KNOWLEDGE"
+
+
+def test_genuine_contradictions_block_review(client):
+    """A Pill with contradictions must fail review with UNRESOLVED_KNOWLEDGE."""
+    from harvest.fixtures import operations_content
+
+    content = operations_content().model_dump(mode="json")
+    content["contradictions"] = ["Expert A says escalate at 3mm/min; Expert B says 5mm/min."]
+    pill = call(
+        client,
+        "POST",
+        "/pills",
+        "expert",
+        {
+            "pill_id": "test.contradiction",
+            "version": "1.0.0",
+            "owner": "approver",
+            "reviewers": ["reviewer"],
+            "content": content,
+            "previous_version": None,
+            "change_reason": "Synthetic test with contradictions",
+        },
+    )
+    assert pill["status"] == "DRAFT"
+    call(
+        client,
+        "POST",
+        "/pills/test.contradiction/versions/1.0.0/submit",
+        "expert",
+        {"note": "Submit"},
+    )
+    response = client.post(
+        BASE + "/pills/test.contradiction/versions/1.0.0/review",
+        headers={"Authorization": "Bearer demo-reviewer"},
+        json={"note": "Try to review"},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "UNRESOLVED_KNOWLEDGE"
+
+
+def test_live_extraction_of_complete_interview_has_no_gaps():
+    """A CompatibleProvider extracting from a complete, internally consistent
+    interview should return empty elicitation_gaps when the model heeds the
+    gap-discipline instructions. We simulate the model's correct behaviour."""
+    payload = _valid_extraction_json()
+    payload["elicitation_gaps"] = []
+    payload["content"]["unresolved_questions"] = []
+    payload["content"]["contradictions"] = []
+    provider = _compatible_provider(lambda req: _mock_chat_response(payload))
+    capture = {
+        "capture": {
+            "title": "Complete interview",
+            "transcript": "A fully specified interview with all details present.",
+            "domain": "Asset Operations",
+            "synthetic": False,
+            "author": "expert",
+        }
+    }
+    extraction, _ = generate(provider, "extract", capture, Extraction)
+    assert extraction.elicitation_gaps == []
+    assert extraction.content.unresolved_questions == []
+    assert extraction.content.contradictions == []
+
+
+def test_live_extraction_with_genuine_gap_preserves_it():
+    """When the model identifies a genuine gap, it must be preserved in
+    elicitation_gaps — the system does not suppress real gaps."""
+    payload = _valid_extraction_json()
+    payload["elicitation_gaps"] = ["Pump capacity threshold not specified in the interview"]
+    provider = _compatible_provider(lambda req: _mock_chat_response(payload))
+    capture = {
+        "capture": {
+            "title": "Interview with a gap",
+            "transcript": "An interview that is missing a key threshold.",
+            "domain": "Asset Operations",
+            "synthetic": False,
+            "author": "expert",
+        }
+    }
+    extraction, _ = generate(provider, "extract", capture, Extraction)
+    assert len(extraction.elicitation_gaps) == 1
+    assert "threshold" in extraction.elicitation_gaps[0].lower()
+
+
+def test_ops_transcript_states_completeness():
+    """The ops transcript must explicitly state that the expert considers the
+    described scope complete with no known contradictions."""
+    from harvest.fixtures import OPS_TRANSCRIPT
+
+    assert "complete for this synthetic workflow" in OPS_TRANSCRIPT.lower()
+    assert "no known contradictions" in OPS_TRANSCRIPT.lower()
+
+
+def test_tenant_transcript_states_completeness():
+    """The tenant transcript must explicitly state completeness."""
+    from harvest.fixtures import TENANT_TRANSCRIPT
+
+    assert "complete for this synthetic workflow" in TENANT_TRANSCRIPT.lower()
+    assert "no known contradictions" in TENANT_TRANSCRIPT.lower()

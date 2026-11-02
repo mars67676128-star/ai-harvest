@@ -71,6 +71,14 @@ export interface ExpertResponseResult {
   conversation: SifuConversation;
 }
 
+export type KnowledgeCandidateStatus =
+  | "awaiting_expert_confirmation"
+  | "not_reusable"
+  | "awaiting_owner_validation"
+  | "validated"
+  | "changes_requested"
+  | "rejected";
+
 export interface KnowledgeCandidate {
   id: string;
   kind: "knowledge_candidate";
@@ -85,11 +93,15 @@ export interface KnowledgeCandidate {
   rationale?: string | null;
   source_experts: string[];
   unresolved_questions: string[];
+  domain: string;
+  knowledge_owner_id: string;
+  knowledge_owner_name: string;
   source_request_id: string;
   source_expert_id: string;
   source_expert_name: string;
-  status: "awaiting_expert_confirmation" | "confirmed" | "not_reusable";
-  decision?: Record<string, unknown> | null;
+  status: KnowledgeCandidateStatus;
+  expert_decision?: Record<string, unknown> | null;
+  owner_decision?: Record<string, unknown> | null;
 }
 
 export async function startSifuConversation(question: string): Promise<SifuConversation> {
@@ -149,6 +161,21 @@ export async function decideKnowledgeCandidate(
   note = "",
 ): Promise<KnowledgeCandidate> {
   return request<KnowledgeCandidate>(`/sifu/knowledge-candidates/${candidateId}/decision`, "POST", {
+    decision,
+    note,
+  });
+}
+
+export async function listKnowledgeReviews(): Promise<KnowledgeCandidate[]> {
+  return request<KnowledgeCandidate[]>("/sifu/reviews");
+}
+
+export async function decideKnowledgeOwnerReview(
+  candidateId: string,
+  decision: "validate" | "request_changes" | "reject",
+  note = "",
+): Promise<KnowledgeCandidate> {
+  return request<KnowledgeCandidate>(`/sifu/knowledge-candidates/${candidateId}/owner-decision`, "POST", {
     decision,
     note,
   });

@@ -11,7 +11,7 @@ if (-not (Test-Path $BaseLauncher)) {
 $source = Get-Content $BaseLauncher -Raw
 
 $oldRecorder = '$Recorder = Join-Path $FrontendDir "scripts\record-demo-take3.mjs"'
-$newRecorder = '$Recorder = Join-Path $FrontendDir "scripts\record-demo-take3-polished.mjs"'
+$newRecorder = '$Recorder = Join-Path $FrontendDir "scripts\record-demo-take3-polished-win.mjs"'
 if (-not $source.Contains($oldRecorder)) {
     throw "Take 3 Polished launcher patch failed: recorder assignment not found."
 }

@@ -84,7 +84,74 @@ class MockProvider:
         }
 
 
+class OpenAIProvider:
+    """OpenAI Responses API provider with explicit reasoning effort and schema validation."""
+
+    def __init__(self, settings: Settings, transport=None):
+        self.settings = settings
+        self.transport = transport
+
+    def structured_generate(self, operation, payload, schema):
+        prompt, meta = prompt_info(operation)
+        instructions = (
+            prompt
+            + "\n\nReturn only one valid JSON object. Do not use markdown fences or commentary."
+            + "\nThe object must match this JSON schema exactly:\n"
+            + json.dumps(schema, ensure_ascii=False)
+        )
+        with httpx.Client(
+            timeout=self.settings.timeout, transport=self.transport, follow_redirects=False
+        ) as client:
+            response = client.post(
+                self.settings.base_url.rstrip("/") + "/responses",
+                headers={
+                    "Authorization": f"Bearer {self.settings.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.settings.model,
+                    "instructions": instructions,
+                    "input": json.dumps(payload, ensure_ascii=False),
+                    "reasoning": {"effort": self.settings.reasoning_effort},
+                    "max_output_tokens": 8000,
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+            if body.get("status") != "completed":
+                raise ValueError("Incomplete model response")
+
+            parts = []
+            for item in body.get("output", []):
+                if item.get("type") != "message":
+                    continue
+                for content in item.get("content", []):
+                    if content.get("type") == "output_text":
+                        parts.append(content.get("text", ""))
+                    elif content.get("type") == "refusal":
+                        raise ValueError("Model refused structured output")
+
+            text = "".join(parts).strip()
+            if not text:
+                raise ValueError("Model returned no output text")
+            if len(text) > 150000:
+                raise ValueError("Model response exceeds size limit")
+            data = json.loads(text)
+            request_id = response.headers.get("x-request-id") or body.get("id")
+            return data, {
+                **meta,
+                "provider": "openai",
+                "model": self.settings.model,
+                "reasoning_effort": self.settings.reasoning_effort,
+                "live": True,
+                "request_id": request_id,
+                "usage": body.get("usage", {}),
+            }
+
+
 class CompatibleProvider:
+    """Generic OpenAI-compatible Chat Completions adapter kept for portability."""
+
     def __init__(self, settings: Settings, transport=None):
         self.settings = settings
         self.transport = transport
@@ -133,7 +200,11 @@ class CompatibleProvider:
 
 
 def make_provider(settings):
-    return MockProvider() if settings.provider == "mock" else CompatibleProvider(settings)
+    if settings.provider == "mock":
+        return MockProvider()
+    if settings.provider == "openai":
+        return OpenAIProvider(settings)
+    return CompatibleProvider(settings)
 
 
 def generate(provider: LLMProvider, operation: str, payload: dict, output: type[BaseModel]):

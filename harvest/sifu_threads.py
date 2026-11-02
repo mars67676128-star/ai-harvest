@@ -92,8 +92,7 @@ def _can_read(service: Service, conversation: dict, actor: Actor) -> bool:
         return True
     if "expert" in actor.roles:
         return any(
-            request["expert_id"] == actor.id
-            for request in _requests(service, conversation["id"])
+            request["expert_id"] == actor.id for request in _requests(service, conversation["id"])
         )
     return False
 

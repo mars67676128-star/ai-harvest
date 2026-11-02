@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -244,8 +245,19 @@ source = source.replaceAll('Take 3 recording failed:', 'Take 3 Polished recordin
 source = source.replaceAll('Saved Take 3 recording to', 'Saved Take 3 Polished recording to');
 
 await fs.writeFile(runtimePath, source, "utf8");
-try {
-  await import(pathToFileURL(runtimePath).href + "?v=" + Date.now());
-} finally {
+const syntax = spawnSync(process.execPath, ["--check", runtimePath], { encoding: "utf8" });
+if (syntax.status !== 0) {
   await fs.rm(runtimePath, { force: true });
+  throw new Error("Generated Take 3 Polished runtime failed syntax check:\n" + (syntax.stderr || syntax.stdout || "unknown syntax error"));
+}
+
+if (process.env.TAKE3_PATCH_CHECK_ONLY === "1") {
+  console.log("Take 3 Polished patch patterns and generated runtime syntax: OK");
+  await fs.rm(runtimePath, { force: true });
+} else {
+  try {
+    await import(pathToFileURL(runtimePath).href + "?v=" + Date.now());
+  } finally {
+    await fs.rm(runtimePath, { force: true });
+  }
 }

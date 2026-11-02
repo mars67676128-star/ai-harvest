@@ -91,10 +91,16 @@ class Settings:
             required = {"id", "name", "domains"}
             if not required <= entry.keys():
                 raise ValueError("Each SIFU knowledge owner requires id, name and domains")
-            if not all(isinstance(entry[key], str) and entry[key].strip() for key in ("id", "name")):
+            if not all(
+                isinstance(entry[key], str) and entry[key].strip() for key in ("id", "name")
+            ):
                 raise ValueError("SIFU knowledge owner id and name must be nonempty strings")
-            if not isinstance(entry["domains"], list) or not entry["domains"] or not all(
-                isinstance(domain, str) and domain.strip() for domain in entry["domains"]
+            if (
+                not isinstance(entry["domains"], list)
+                or not entry["domains"]
+                or not all(
+                    isinstance(domain, str) and domain.strip() for domain in entry["domains"]
+                )
             ):
                 raise ValueError("SIFU knowledge owner domains must be a nonempty string list")
             if entry["id"] in seen_owner_ids:

@@ -159,7 +159,19 @@ def _validate_grounding(
                 "Sifu returned a citation outside the approved knowledge snapshot.",
             )
         source = allowed_knowledge[key]
-        if citation.title != source["title"] or citation.domain != source["domain"]:
+        citation_metadata = (
+            citation.title,
+            citation.domain,
+            citation.source_expert,
+            citation.validator,
+        )
+        source_metadata = (
+            source["title"],
+            source["domain"],
+            source["source_expert"],
+            source["validator"],
+        )
+        if citation_metadata != source_metadata:
             raise DomainError(
                 502,
                 "SIFU_CITATION_MISMATCH",
@@ -195,11 +207,15 @@ def _validate_grounding(
                 "SIFU_UNKNOWN_EXPERT",
                 "Sifu attempted to route to a person outside the configured expert directory.",
             )
-        if output.recommended_expert.name != expert["name"] or output.recommended_expert.role != expert["role"]:
+        if (
+            output.recommended_expert.name != expert["name"]
+            or output.recommended_expert.role != expert["role"]
+            or output.recommended_expert.skills != expert["skills"]
+        ):
             raise DomainError(
                 502,
                 "SIFU_EXPERT_MISMATCH",
-                "Sifu altered configured expert identity metadata.",
+                "Sifu altered configured expert identity or expertise metadata.",
             )
 
     if output.reusable_insight.detected and not has_expert_context:
@@ -230,7 +246,9 @@ class SifuAgent:
             raise DomainError(
                 503,
                 "SIFU_AI_NOT_CONFIGURED",
-                "Live Sifu AI is not configured. Set HARVEST_LLM_PROVIDER, HARVEST_LLM_MODEL and HARVEST_LLM_API_KEY; Sifu will not substitute canned answers.",
+                "Live Sifu AI is not configured. Set HARVEST_LLM_PROVIDER, "
+                "HARVEST_LLM_MODEL and HARVEST_LLM_API_KEY; Sifu will not substitute "
+                "canned answers.",
             )
 
         knowledge = _knowledge_snapshot(self.service, self.settings.sifu_max_knowledge_items)

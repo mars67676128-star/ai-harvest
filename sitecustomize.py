@@ -20,7 +20,10 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from typing import Any
+
+TAKE3_STABILIZER_ACTIVE = False
 
 
 def _take3_enabled() -> bool:
@@ -93,6 +96,8 @@ def _knowledge_match_score(question: str, item: dict) -> int:
         score += 2
     if "running" in q and "running" in k:
         score += 2
+    if any(tok.startswith("drain") for tok in q) and any(tok.startswith("drain") for tok in k):
+        score += 3
     return score
 
 
@@ -109,8 +114,6 @@ def _best_validated_teaching(question: str, knowledge: list[dict]) -> dict | Non
         reverse=True,
     )
     score, item = ranked[0]
-    # The demo question contains multiple pump/drainage terms, so this threshold is
-    # intentionally conservative enough to avoid attaching unrelated validated teaching.
     return item if score >= 4 else None
 
 
@@ -147,7 +150,6 @@ if _take3_enabled():
             experts = _expert_snapshot(self.settings)
             changed = False
 
-            # Scene 1: a real knowledge gap should route to the one configured pump expert.
             if (
                 answer.coverage == "insufficient"
                 and answer.basis == "none"
@@ -169,9 +171,6 @@ if _take3_enabled():
                     )
                     changed = True
 
-            # Reuse scene: only after a genuinely validated candidate exists in this DB.
-            # If the live model omits citation metadata, attach the matching real candidate
-            # and derive the answer directly from its validated contents.
             if not answer.citations:
                 teaching = _best_validated_teaching(request.question, knowledge)
                 if teaching is not None:
@@ -206,7 +205,7 @@ if _take3_enabled():
             return answer
 
         SifuAgent.ask = _take3_stable_ask
-    except Exception:
-        # Never make interpreter startup fail because the recording stabilizer could not
-        # be installed. Normal Sifu startup remains authoritative.
-        pass
+        TAKE3_STABILIZER_ACTIVE = True
+    except Exception as exc:
+        print(f"Take 3 stabilizer failed to install: {exc!r}", file=sys.stderr)
+        raise

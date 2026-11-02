@@ -1,10 +1,13 @@
 import { FormEvent, useEffect, useState } from "react";
 import { demoPersona } from "./demoIdentity";
 import {
+  decideKnowledgeCandidate,
+  draftKnowledgeCandidate,
   getSifuConversation,
   listExpertiseRequests,
   respondToExpertiseRequest,
   type ExpertiseRequest,
+  type KnowledgeCandidate,
   type SifuConversation,
 } from "./sifuThreadsApi";
 
@@ -14,6 +17,7 @@ export default function ExpertRequestsView() {
   const [requests, setRequests] = useState<ExpertiseRequest[]>([]);
   const [selected, setSelected] = useState<ExpertiseRequest | null>(null);
   const [conversation, setConversation] = useState<SifuConversation | null>(null);
+  const [candidate, setCandidate] = useState<KnowledgeCandidate | null>(null);
   const [draft, setDraft] = useState("");
   const [outcome, setOutcome] = useState<Outcome>("answer");
   const [loading, setLoading] = useState(false);
@@ -36,6 +40,7 @@ export default function ExpertRequestsView() {
 
   const openRequest = async (request: ExpertiseRequest) => {
     setSelected(request);
+    setCandidate(null);
     setLoading(true);
     setError(null);
     try {
@@ -70,6 +75,32 @@ export default function ExpertRequestsView() {
     }
   };
 
+  const reviewInsight = async () => {
+    if (!selected || !conversation || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      setCandidate(await draftKnowledgeCandidate(conversation.id, selected.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sifu could not draft the candidate teaching.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const decideCandidate = async (decision: "confirm" | "not_reusable") => {
+    if (!candidate || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      setCandidate(await decideKnowledgeCandidate(candidate.id, decision));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not record your candidate decision.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (demoPersona !== "expert") {
     return (
       <section className="index-page page-fade">
@@ -87,7 +118,52 @@ export default function ExpertRequestsView() {
     );
   }
 
+  if (candidate) {
+    return (
+      <section className="review-page page-fade">
+        <div className="review-header">
+          <button className="back-link" onClick={() => setCandidate(null)}>← Conversation</button>
+          <span className={`status-word ${candidate.status === "confirmed" ? "validated" : "candidate"}`}>
+            {candidate.status === "confirmed" ? "Meaning confirmed" : candidate.status === "not_reusable" ? "Not reusable" : "Candidate"}
+          </span>
+        </div>
+        <article className="review-manuscript">
+          <div className="manuscript-kicker">Candidate Knowledge Pill</div>
+          <h1>{candidate.title}</h1>
+          <p className="review-byline">Extracted from this conversation · Source: {candidate.source_expert_name}</p>
+
+          <KnowledgeBlock title="Principle"><p>{candidate.principle}</p></KnowledgeBlock>
+          {candidate.applies_when.length > 0 && <KnowledgeBlock title="Applies when"><BulletList items={candidate.applies_when} /></KnowledgeBlock>}
+          {candidate.checks.length > 0 && <KnowledgeBlock title="Check"><BulletList items={candidate.checks} /></KnowledgeBlock>}
+          {candidate.escalate_when.length > 0 && <KnowledgeBlock title="Escalate when"><BulletList items={candidate.escalate_when} /></KnowledgeBlock>}
+          {candidate.exceptions.length > 0 && <KnowledgeBlock title="Exceptions"><BulletList items={candidate.exceptions} /></KnowledgeBlock>}
+          {candidate.rationale && <KnowledgeBlock title="Why"><p>{candidate.rationale}</p></KnowledgeBlock>}
+          {candidate.unresolved_questions.length > 0 && <KnowledgeBlock title="Still unresolved"><BulletList items={candidate.unresolved_questions} /></KnowledgeBlock>}
+
+          <KnowledgeBlock title="Source"><p>{candidate.source_experts.join(", ")}</p></KnowledgeBlock>
+
+          {candidate.status === "awaiting_expert_confirmation" ? (
+            <div className="manuscript-actions">
+              <button className="text-action" disabled={loading} onClick={() => void decideCandidate("not_reusable")}>Not reusable</button>
+              <button className="primary-action" disabled={loading} onClick={() => void decideCandidate("confirm")}>Looks right ✓</button>
+            </div>
+          ) : candidate.status === "confirmed" ? (
+            <div className="quiet-success">✓ You confirmed that Sifu understood your meaning. This is still a candidate until a Knowledge Owner validates it.</div>
+          ) : (
+            <div className="muted-copy">This insight will remain case context and will not be promoted as reusable organisational knowledge.</div>
+          )}
+          {error && <p className="risk-note">{error}</p>}
+        </article>
+      </section>
+    );
+  }
+
   if (selected && conversation) {
+    const latestSifu = [...conversation.messages]
+      .reverse()
+      .find((message) => message.role === "sifu" && message.answer);
+    const reusableInsight = latestSifu?.answer?.reusable_insight;
+
     return (
       <section className="conversation-page page-fade">
         <div className="conversation-title">
@@ -116,6 +192,19 @@ export default function ExpertRequestsView() {
               <div className="message-body">{message.content}</div>
             </article>
           ))}
+
+          {selected.status === "responded" && reusableInsight?.detected && (
+            <div className="insight-event">
+              <span className="spark">✦</span>
+              <div>
+                <strong>Sifu noticed something reusable</strong>
+                <span>{reusableInsight.summary}</span>
+              </div>
+              <button disabled={loading} onClick={() => void reviewInsight()}>
+                Review what I understood →
+              </button>
+            </div>
+          )}
 
           {error && <p className="risk-note">{error}</p>}
         </div>
@@ -197,4 +286,12 @@ export default function ExpertRequestsView() {
       </section>
     </section>
   );
+}
+
+function KnowledgeBlock(props: { title: string; children: React.ReactNode }) {
+  return <section className="knowledge-section"><h3>{props.title}</h3><div>{props.children}</div></section>;
+}
+
+function BulletList({ items }: { items: string[] }) {
+  return <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul>;
 }

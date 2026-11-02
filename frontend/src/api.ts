@@ -254,3 +254,86 @@ export interface ExtractionRecord {
 export async function extractCapture(captureId: string): Promise<ExtractionRecord> {
   return request<ExtractionRecord>(`/captures/${captureId}/extract`, "POST");
 }
+
+// --- SIFU live agent ---
+
+export type SifuCoverage = "full" | "partial" | "insufficient";
+export type SifuBasis = "validated_knowledge" | "expert_context" | "mixed" | "none";
+export type SifuRisk = "low" | "medium" | "high" | "unknown";
+
+export interface SifuConversationTurn {
+  role: "employee" | "expert" | "sifu";
+  speaker: string;
+  content: string;
+}
+
+export interface SifuKnowledgeCitation {
+  pill_id: string;
+  version: string;
+  title: string;
+  domain: string;
+  source_expert?: string | null;
+  validator?: string | null;
+}
+
+export interface SifuExpertMatch {
+  id: string;
+  name: string;
+  role: string;
+  skills: string[];
+  reason: string;
+}
+
+export interface SifuReusableInsight {
+  detected: boolean;
+  summary?: string | null;
+  rationale?: string | null;
+  needs_expert_confirmation: boolean;
+}
+
+export interface SifuAnswer {
+  coverage: SifuCoverage;
+  basis: SifuBasis;
+  answer: string;
+  known_points: string[];
+  missing_information: string[];
+  follow_up_question?: string | null;
+  recommended_expert?: SifuExpertMatch | null;
+  citations: SifuKnowledgeCitation[];
+  risk: SifuRisk;
+  risk_reason: string;
+  reusable_insight: SifuReusableInsight;
+  ai: {
+    provider?: string;
+    model?: string;
+    live?: boolean;
+    prompt_version?: string;
+    request_id?: string | null;
+    usage?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+}
+
+export interface SifuStatus {
+  configured: boolean;
+  provider: string;
+  model?: string | null;
+  approved_knowledge_items: number;
+  configured_experts: number;
+}
+
+export async function getSifuStatus(): Promise<SifuStatus> {
+  return request<SifuStatus>("/sifu/status");
+}
+
+export async function askSifu(body: {
+  question: string;
+  conversation?: SifuConversationTurn[];
+  context?: Record<string, string>;
+}): Promise<SifuAnswer> {
+  return request<SifuAnswer>("/sifu/ask", "POST", {
+    question: body.question,
+    conversation: body.conversation ?? [],
+    context: body.context ?? {},
+  });
+}

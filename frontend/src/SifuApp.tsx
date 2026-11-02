@@ -1,11 +1,16 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
-  askSifu,
   getSifuStatus,
   type SifuAnswer,
   type SifuExpertMatch,
   type SifuStatus,
 } from "./api";
+import {
+  addSifuMessage,
+  routeSifuExpert,
+  startSifuConversation,
+  type SifuConversation,
+} from "./sifuThreadsApi";
 
 type View = "ask" | "knowledge" | "cases" | "requests" | "reviews" | "expertise";
 
@@ -19,7 +24,7 @@ type KnowledgeItem = {
 };
 
 type Exchange = {
-  id: number;
+  id: string;
   question: string;
   answer: SifuAnswer;
 };
@@ -61,11 +66,32 @@ const seededKnowledge: KnowledgeItem[] = [
 
 const sampleQuestion = "Pump says RUNNING but the basement water is still rising. What should I do?";
 
+function exchangesFromConversation(conversation: SifuConversation): Exchange[] {
+  const exchanges: Exchange[] = [];
+  let pendingEmployee: { id: string; content: string } | null = null;
+  for (const message of conversation.messages) {
+    if (message.role === "employee") {
+      pendingEmployee = { id: message.id, content: message.content };
+      continue;
+    }
+    if (message.role === "sifu" && message.answer && pendingEmployee) {
+      exchanges.push({
+        id: `${pendingEmployee.id}-${message.id}`,
+        question: pendingEmployee.content,
+        answer: message.answer,
+      });
+      pendingEmployee = null;
+    }
+  }
+  return exchanges;
+}
+
 export default function SifuApp() {
   const [view, setView] = useState<View>("ask");
   const [draft, setDraft] = useState("");
   const [validated, setValidated] = useState(false);
   const [knowledgeQuery, setKnowledgeQuery] = useState("");
+  const [conversation, setConversation] = useState<SifuConversation | null>(null);
   const [exchanges, setExchanges] = useState<Exchange[]>([]);
   const [pendingQuestion, setPendingQuestion] = useState("");
   const [agentError, setAgentError] = useState<string | null>(null);
@@ -86,6 +112,11 @@ export default function SifuApp() {
     );
   }, [validated]);
 
+  const applyConversation = (next: SifuConversation) => {
+    setConversation(next);
+    setExchanges(exchangesFromConversation(next));
+  };
+
   const runQuestion = async (text: string) => {
     const question = text.trim();
     if (!question || loading) return;
@@ -93,25 +124,32 @@ export default function SifuApp() {
     setLoading(true);
     setPendingQuestion(question);
     setAgentError(null);
-    setRequestedExpert(null);
     setDraft("");
 
-    const conversation = exchanges.flatMap((exchange) => [
-      { role: "employee" as const, speaker: "Amanda Lee", content: exchange.question },
-      { role: "sifu" as const, speaker: "Sifu", content: exchange.answer.answer },
-    ]);
-
     try {
-      const answer = await askSifu({ question, conversation });
-      setExchanges((current) => [
-        ...current,
-        { id: Date.now(), question, answer },
-      ]);
-      setAgentStatus((current) => current ? { ...current, configured: true } : current);
+      const next = conversation
+        ? await addSifuMessage(conversation.id, question)
+        : await startSifuConversation(question);
+      applyConversation(next);
+      setAgentStatus((current) => (current ? { ...current, configured: true } : current));
     } catch (error) {
       setAgentError(error instanceof Error ? error.message : "Sifu AI request failed.");
     } finally {
       setPendingQuestion("");
+      setLoading(false);
+    }
+  };
+
+  const askExpert = async (expert: SifuExpertMatch) => {
+    if (!conversation || loading) return;
+    setLoading(true);
+    setAgentError(null);
+    try {
+      await routeSifuExpert(conversation.id, expert.id);
+      setRequestedExpert(expert);
+    } catch (error) {
+      setAgentError(error instanceof Error ? error.message : "Expert routing failed.");
+    } finally {
       setLoading(false);
     }
   };
@@ -123,6 +161,7 @@ export default function SifuApp() {
 
   const resetConversation = () => {
     setDraft("");
+    setConversation(null);
     setExchanges([]);
     setPendingQuestion("");
     setAgentError(null);
@@ -171,7 +210,7 @@ export default function SifuApp() {
               onDraftChange={setDraft}
               onSubmit={submitQuestion}
               onPreview={() => void runQuestion(sampleQuestion)}
-              onAskExpert={setRequestedExpert}
+              onAskExpert={(expert) => void askExpert(expert)}
             />
           )}
           {view === "knowledge" && (
@@ -326,7 +365,7 @@ function AskView(props: {
 
         {props.requestedExpert && (
           <>
-            <SystemLine>Expert request prepared for {props.requestedExpert.name} · awaiting a human response</SystemLine>
+            <SystemLine>Expert request sent to {props.requestedExpert.name} · awaiting a human response</SystemLine>
             <SifuMessage mood="calm">
               <p>I’ve kept your question and the relevant source context together for {props.requestedExpert.name}.</p>
               <p className="muted-copy">Until that person responds and the organisation validates any reusable teaching, I’ll treat this as an unresolved knowledge gap.</p>
@@ -541,7 +580,7 @@ function TimelineGroup(props: { title: string; rows: string[][] }) {
 function RequestsView({ onOpen }: { onOpen: () => void }) {
   return (
     <section className="index-page page-fade">
-      <div className="page-heading"><div><span className="eyebrow">Workflow preview</span><h1>Expertise requests</h1><p>This queue is the next live workflow to connect. Sifu’s Ask surface no longer fabricates expert replies.</p></div></div>
+      <div className="page-heading"><div><span className="eyebrow">Workflow preview</span><h1>Expertise requests</h1><p>The backend queue is now persistent. The next UI pass will load requests for the signed-in expert instead of these design-state rows.</p></div></div>
       <section className="timeline-group"><h2>Design-state examples</h2>
         <button className="timeline-row high" onClick={onOpen}><span className="request-pulse" /><span className="timeline-title"><strong>Pump RUNNING while water rises</strong><small>Amanda Lee · Basement B2 · example request</small></span><span>Preview</span><ArrowIcon /></button>
         <button className="timeline-row"><span className="request-pulse" /><span className="timeline-title"><strong>Chiller restart after brief outage</strong><small>Daniel Wong · Tower C · example request</small></span><span>Preview</span><ArrowIcon /></button>

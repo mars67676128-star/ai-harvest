@@ -40,10 +40,14 @@ export default function SifuCaseGuidance() {
   };
 
   const coverageLabel = result?.coverage === "full"
-    ? "Validated coverage"
+    ? "Validated knowledge directly applies"
     : result?.coverage === "partial"
-      ? "Partial validated coverage"
-      : "Knowledge gap";
+      ? "Based on partially matching validated knowledge"
+      : "Validated knowledge does not fully cover this situation";
+
+  const recommendsEscalation = !!result && (
+    result.risk === "high" || result.known_points.some((point) => /escalat/i.test(point))
+  );
 
   return (
     <div>
@@ -90,10 +94,14 @@ export default function SifuCaseGuidance() {
 
       {result && (
         <>
-          <div className={result.risk === "high" ? "callout callout-warning mb-16" : "callout callout-info mb-16"}>
-            <strong>Sifu guidance · {coverageLabel}</strong>
-            <br />{result.answer}
-          </div>
+          <section className={`guidance-decision ${recommendsEscalation ? "guidance-decision-escalate" : ""}`}>
+            <div className="decision-kicker">Sifu case guidance</div>
+            <div className="decision-title">
+              {recommendsEscalation ? "ESCALATE" : "REVIEW WITH HUMAN OVERSIGHT"}
+            </div>
+            <div className="decision-subtitle">{coverageLabel}</div>
+            <div className="decision-body">{result.answer}</div>
+          </section>
 
           {result.known_points.length > 0 && (
             <div className="card mb-16">
@@ -136,9 +144,16 @@ export default function SifuCaseGuidance() {
                       </div>
                       <span className="badge badge-success">Validated</span>
                     </div>
-                    <div className="kv">
-                      <div><dt>Taught by</dt><dd>{citation.source_expert ?? "—"}</dd></div>
-                      <div><dt>Validated by</dt><dd>{citation.validator ?? "—"}</dd></div>
+                    <div className="provenance-flow">
+                      <div>
+                        <span className="provenance-role">Expert</span>
+                        <strong>{citation.source_expert ?? "—"}</strong>
+                      </div>
+                      <span className="provenance-arrow">→</span>
+                      <div>
+                        <span className="provenance-role">Knowledge Owner</span>
+                        <strong>{citation.validator ?? "—"}</strong>
+                      </div>
                     </div>
                   </div>
                 ))}

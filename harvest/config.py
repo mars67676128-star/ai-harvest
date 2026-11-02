@@ -18,7 +18,7 @@ class Settings:
     environment: str = "demo"
     provider: str = "mock"
     base_url: str = "https://api.openai.com/v1"
-    model: str = "gpt-6-astra"
+    model: str = "gpt-6-luna"
     api_key: str = ""
     timeout: float = 60
     reasoning_effort: str = "high"
@@ -48,8 +48,10 @@ class Settings:
             raise ValueError("Live provider transport must use HTTPS")
         if self.provider == "openai" and not self.base_url.startswith("https://api.openai.com/"):
             raise ValueError("OpenAI provider must use https://api.openai.com/")
-        if self.reasoning_effort not in ("low", "medium", "high"):
-            raise ValueError("HARVEST_LLM_REASONING_EFFORT must be low, medium or high")
+        if self.reasoning_effort not in ("none", "low", "medium", "high", "xhigh", "max"):
+            raise ValueError(
+                "HARVEST_LLM_REASONING_EFFORT must be none, low, medium, high, xhigh or max"
+            )
         if not 1 <= self.sifu_max_knowledge_items <= 100:
             raise ValueError("SIFU_MAX_KNOWLEDGE_ITEMS must be between 1 and 100")
         if not isinstance(self.expert_directory, list):
@@ -97,7 +99,7 @@ class Settings:
             environment=environment,
             provider=os.getenv("HARVEST_LLM_PROVIDER", "mock"),
             base_url=os.getenv("HARVEST_LLM_BASE_URL", "https://api.openai.com/v1"),
-            model=os.getenv("HARVEST_LLM_MODEL", "gpt-6-astra"),
+            model=os.getenv("HARVEST_LLM_MODEL", "gpt-6-luna"),
             api_key=os.getenv("HARVEST_LLM_API_KEY", ""),
             timeout=float(os.getenv("HARVEST_LLM_TIMEOUT", "60")),
             reasoning_effort=os.getenv("HARVEST_LLM_REASONING_EFFORT", "high"),

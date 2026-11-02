@@ -129,7 +129,8 @@ class CompatibleProvider:
             # gpt-6.1-terra is a reasoning model that defaults to medium effort.
             # Sifu does schema-driven extraction — spend the completion budget on
             # the JSON result, not reasoning tokens.
-            body["reasoning_effort"] = "none"
+            if self.settings.model == "gpt-6.1-terra":
+                body["reasoning_effort"] = "none"
         else:
             # Tencent and other OpenAI-compatible endpoints use json_object mode.
             body["response_format"] = {"type": "json_object"}

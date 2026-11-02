@@ -94,6 +94,59 @@ async function chapter(page, { kicker, title, accent, body, hold = 4200 }) {
   await sleep(hold);
 }
 
+async function showWaitOverlay(page, { kicker, title, body }) {
+  await page.evaluate(({ kicker, title, body }) => {
+    document.getElementById("sifu-video-overlay")?.remove();
+    const overlay = document.createElement("div");
+    overlay.id = "sifu-video-overlay";
+    overlay.innerHTML = `
+      <div style="max-width:1100px">
+        <div style="color:#77cfc5;font:700 16px/1.2 Arial,sans-serif;letter-spacing:.16em;text-transform:uppercase;margin-bottom:22px">${kicker}</div>
+        <div style="color:#f7f3e9;font:700 64px/1.02 Georgia,'Times New Roman',serif;letter-spacing:-.035em">${title}</div>
+        ${body ? `<div style="color:#c6d6d2;font:400 22px/1.5 Arial,sans-serif;margin-top:25px;max-width:900px">${body}</div>` : ""}
+      </div>`;
+    Object.assign(overlay.style, {
+      position: "fixed",
+      inset: "0",
+      zIndex: "99999",
+      display: "grid",
+      placeItems: "center",
+      padding: "9vw",
+      background: "radial-gradient(circle at 78% 18%, rgba(61,191,177,.13), transparent 34%), linear-gradient(135deg,#0c2d31 0%,#092126 100%)",
+      opacity: "0",
+      transition: "opacity 280ms ease",
+      pointerEvents: "none",
+    });
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => { overlay.style.opacity = "1"; });
+  }, { kicker, title, body });
+  await sleep(500);
+}
+
+async function hideWaitOverlay(page) {
+  await page.evaluate(() => {
+    const overlay = document.getElementById("sifu-video-overlay");
+    if (!overlay) return;
+    overlay.style.opacity = "0";
+    window.setTimeout(() => overlay.remove(), 300);
+  });
+  await sleep(420);
+}
+
+async function petMoment(page, hold = 1800) {
+  const pet = page.locator(".sifu-pet-shell");
+  if (await pet.count()) {
+    try {
+      await pet.hover();
+      await sleep(hold);
+      await page.mouse.move(960, 130);
+      await sleep(350);
+    } catch {
+      // Mascot is a visual enhancement only; never fail the demo because of it.
+    }
+  }
+}
+
 async function fillAndSend(page, text) {
   const composer = page.locator("textarea").last();
   await composer.waitFor({ state: "visible", timeout: 30_000 });
@@ -141,49 +194,52 @@ async function main() {
 
     await page.goto(baseUrl, { waitUntil: "networkidle" });
     await page.getByRole("heading", { name: /What can I help you with/i }).waitFor();
-    await sleep(2400);
+    await sleep(2200);
 
     await fillAndSend(page, QUESTION);
     await page.getByText("Knowledge gap", { exact: true }).waitFor({ timeout: 150_000 });
-    await sleep(4200);
+    await sleep(2800);
+    await petMoment(page, 1700);
 
     const askTan = page.getByRole("button", { name: /Ask Tan/i });
     await askTan.scrollIntoViewIfNeeded();
-    await sleep(1200);
+    await sleep(900);
     await askTan.click();
     await page.getByText(/Expert request sent to Tan Wei Ming/i).waitFor({ timeout: 30_000 });
-    await sleep(3500);
+    await sleep(1500);
+    await petMoment(page, 1700);
 
     await chapter(page, {
       kicker: "When Sifu doesn’t know",
       title: "It finds the person who does.",
       accent: "person",
       body: "The gap stays explicit. No invented policy, no invented expert, no silent promotion to organisational knowledge.",
-      hold: 4500,
+      hold: 4300,
     });
 
     await page.goto(`${baseUrl}/?persona=expert`, { waitUntil: "networkidle" });
     await page.getByRole("heading", { name: "Expertise requests" }).waitFor();
     const requestRow = page.locator("button.timeline-row.high").first();
     await requestRow.waitFor({ state: "visible", timeout: 30_000 });
-    await sleep(1800);
+    await sleep(1400);
     await requestRow.click();
 
     const expertComposer = page.locator('textarea[placeholder*="Share what you would do"]');
     await expertComposer.waitFor({ state: "visible", timeout: 30_000 });
     await expertComposer.fill(EXPERT_RESPONSE);
-    await sleep(1800);
+    await sleep(1500);
     await page.getByRole("button", { name: "Send expert response" }).click();
     await page.getByText("Sifu noticed something reusable").waitFor({ timeout: 150_000 });
-    await sleep(3600);
+    await sleep(2200);
+    await petMoment(page, 1700);
 
     await page.getByRole("button", { name: /Review what I understood/i }).click();
     await page.getByText("Candidate Knowledge Pill", { exact: false }).waitFor({ timeout: 150_000 });
-    await sleep(4200);
+    await sleep(4000);
 
     await page.getByRole("button", { name: /Looks right/i }).click();
     await page.getByText(/waiting for Jennifer Lim/i).waitFor({ timeout: 30_000 });
-    await sleep(3200);
+    await sleep(2800);
 
     await chapter(page, {
       kicker: "Governance",
@@ -197,13 +253,14 @@ async function main() {
     await page.getByRole("heading", { name: "Reviews" }).waitFor();
     const reviewRow = page.locator("button.timeline-row.high").first();
     await reviewRow.waitFor({ state: "visible", timeout: 30_000 });
-    await sleep(1700);
+    await sleep(1400);
     await reviewRow.click();
     await page.getByRole("button", { name: /Validate teaching/i }).waitFor();
-    await sleep(4200);
+    await sleep(3500);
     await page.getByRole("button", { name: /Validate teaching/i }).click();
     await page.getByRole("heading", { name: "Teaching validated" }).waitFor({ timeout: 30_000 });
-    await sleep(4200);
+    await sleep(2000);
+    await petMoment(page, 1800);
 
     await chapter(page, {
       kicker: "Reusable intelligence",
@@ -216,8 +273,16 @@ async function main() {
     await page.goto(baseUrl, { waitUntil: "networkidle" });
     await page.getByRole("heading", { name: /What can I help you with/i }).waitFor();
     await fillAndSend(page, REUSE_QUESTION);
+    await sleep(1200);
+    await showWaitOverlay(page, {
+      kicker: "The organisation remembers",
+      title: "The next shift does not have to rediscover Tan’s judgement.",
+      body: "Sifu is checking the now-validated teaching and its provenance against the new question.",
+    });
     await page.getByText(/Validated organisational knowledge/i).first().waitFor({ timeout: 150_000 });
-    await sleep(5200);
+    await hideWaitOverlay(page);
+    await sleep(3600);
+    await petMoment(page, 1700);
 
     await chapter(page, {
       kicker: "Beyond Q&A",
@@ -231,18 +296,28 @@ async function main() {
     await page.getByRole("button", { name: "Cases" }).click();
     const caseRow = page.getByRole("button", { name: /Pump RUNNING while water rises/i });
     await caseRow.waitFor({ state: "visible", timeout: 30_000 });
-    await sleep(2000);
+    await sleep(1600);
     await caseRow.click();
 
     await page.getByRole("button", { name: "Apply Validated Knowledge" }).waitFor({ timeout: 30_000 });
-    await sleep(2600);
+    await sleep(2200);
     await page.getByRole("button", { name: "Apply Validated Knowledge" }).click();
+    await sleep(1000);
+    await showWaitOverlay(page, {
+      kicker: "Case guidance",
+      title: "Applying validated organisational knowledge to Harbour Exchange.",
+      body: "The answer must stay inside what Tan taught, Jennifer validated and the current readings support.",
+    });
     await page.getByText("ESCALATE", { exact: true }).waitFor({ timeout: 150_000 });
-    await sleep(5200);
+    await hideWaitOverlay(page);
+    await sleep(3000);
+    await petMoment(page, 1600);
 
-    const provenanceHeading = page.getByText("Validated organisational knowledge used", { exact: true });
-    await provenanceHeading.scrollIntoViewIfNeeded();
-    await sleep(4600);
+    const provenanceCard = page.locator(".pill-provenance").first();
+    await provenanceCard.scrollIntoViewIfNeeded();
+    await page.getByText("Tan Wei Ming", { exact: true }).last().waitFor({ timeout: 30_000 });
+    await page.getByText("Jennifer Lim", { exact: true }).last().waitFor({ timeout: 30_000 });
+    await sleep(6200);
 
     await chapter(page, {
       kicker: "Sifu",

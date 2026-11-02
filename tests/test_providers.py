@@ -8,7 +8,7 @@ from harvest.demo import BASE, call
 from harvest.errors import DomainError
 from harvest.fixtures import BACKFLOW_TEXT, OPS_ID, OPS_TRANSCRIPT, demo_case, operations_content
 from harvest.models import Explanation
-from harvest.providers import CompatibleProvider, generate
+from harvest.providers import CompatibleProvider, OpenAIProvider, generate
 
 
 class BrokenProvider:
@@ -140,37 +140,49 @@ def test_feedback_failure_keeps_original_and_feedback(approved):
     assert len(call(approved, "GET", "/pills")) == 1
 
 
-def test_tencent_wire_contract_without_network():
-    settings = Settings(provider="tencent", model="configured-model", api_key="test-secret")
+def test_openai_responses_wire_contract_without_network():
+    settings = Settings(
+        provider="openai",
+        model="gpt-6-luna",
+        api_key="test-secret",
+        reasoning_effort="high",
+    )
 
     def respond(request):
-        assert str(request.url) == "https://tokenhub-intl.tencentcloudmaas.com/v1/chat/completions"
+        assert str(request.url) == "https://api.openai.com/v1/responses"
         assert request.headers["authorization"] == "Bearer test-secret"
         body = json.loads(request.content)
-        assert body["model"] == "configured-model" and body["response_format"] == {
-            "type": "json_object"
-        }
-        assert "tools" not in body
+        assert body["model"] == "gpt-6-luna"
+        assert body["reasoning"] == {"effort": "high"}
+        assert body["max_output_tokens"] == 8000
+        assert "JSON schema" in body["instructions"]
+        assert json.loads(body["input"]) == {"result": {}}
         return httpx.Response(
             200,
+            headers={"x-request-id": "req_test"},
             json={
-                "id": "request-test",
-                "choices": [
+                "id": "resp_test",
+                "status": "completed",
+                "output": [
                     {
-                        "finish_reason": "stop",
-                        "message": {
-                            "content": '{"summary":"Bounded explanation","uncertainty":"Evidence limitations"}'
-                        },
+                        "type": "message",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": '{"summary":"Bounded explanation","uncertainty":"Evidence limitations"}',
+                            }
+                        ],
                     }
                 ],
                 "usage": {"total_tokens": 10},
             },
         )
 
-    provider = CompatibleProvider(settings, transport=httpx.MockTransport(respond))
+    provider = OpenAIProvider(settings, transport=httpx.MockTransport(respond))
     result, meta = generate(provider, "explain", {"result": {}}, Explanation)
     assert result.summary == "Bounded explanation"
-    assert meta["request_id"] == "request-test" and meta["live"]
+    assert meta["request_id"] == "req_test" and meta["live"]
+    assert meta["model"] == "gpt-6-luna" and meta["reasoning_effort"] == "high"
     assert "test-secret" not in str(meta)
 
 
@@ -182,9 +194,9 @@ def test_tencent_wire_contract_without_network():
         ({"choices": [{"finish_reason": "stop", "message": {"content": "not JSON"}}]}, 200),
     ],
 )
-def test_bad_provider_responses_fail_safely(body, status):
+def test_bad_compatible_provider_responses_fail_safely(body, status):
     provider = CompatibleProvider(
-        Settings(provider="tencent", model="test", api_key="test"),
+        Settings(provider="compatible", model="test", api_key="test"),
         transport=httpx.MockTransport(lambda r: httpx.Response(status, json=body)),
     )
     with pytest.raises(DomainError) as exc:

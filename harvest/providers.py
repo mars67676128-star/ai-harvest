@@ -140,10 +140,10 @@ class OpenAIProvider:
                 },
                 json={
                     "model": self.settings.model,
-                    "instructions": prompt,
+                    "instructions": prompt + "\n\nJSON schema is enforced by the response format below.",
                     "input": json.dumps(payload, ensure_ascii=False),
                     "reasoning": {"effort": self.settings.reasoning_effort},
-                    "max_output_tokens": 16000,
+                    "max_output_tokens": 8000,
                     "text": {
                         "format": {
                             "type": "json_schema",

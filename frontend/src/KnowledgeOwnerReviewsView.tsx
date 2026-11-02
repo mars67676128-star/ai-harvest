@@ -142,7 +142,7 @@ export default function KnowledgeOwnerReviewsView() {
           {handled.map((item) => (
             <button className="timeline-row" key={item.id} onClick={() => setSelected(item)}>
               <span className="timeline-title"><strong>{item.title}</strong><small>{item.domain}</small></span>
-              <span>{item.status.replaceAll("_", " ")}</span><span>→</span>
+              <span>{item.status.replace(/_/g, " ")}</span><span>→</span>
             </button>
           ))}
         </section>

@@ -182,8 +182,8 @@ async function impactFlash(page) {
 
 async function focusClick(page, locator, { scale = 1.14, hold = 430, impact = false } = {}) {
   await locator.scrollIntoViewIfNeeded();
-  await focus(page, locator, impact ? 22 : 14, impact);
   await cameraTo(page, locator, scale);
+  await focus(page, locator, impact ? 22 : 14, impact);
   await ripple(page, locator);
   if (impact) await impactFlash(page);
   await locator.click();
@@ -201,8 +201,8 @@ async function progressiveType(page, composer, text, { delay = 26, captionText }
   await composer.waitFor({ state: "visible", timeout: 30_000 });
   await composer.scrollIntoViewIfNeeded();
   const anchorBox = await composer.boundingBox();
-  await focus(page, composer, 20);
   await cameraToBox(page, anchorBox, 1.18);
+  await focus(page, composer, 20);
   if (captionText) await caption(page, captionText, 950);
   await composer.evaluate((el) => el.focus());
   await composer.fill("");
@@ -210,8 +210,10 @@ async function progressiveType(page, composer, text, { delay = 26, captionText }
   const b = Math.floor(text.length * 0.74);
   await composer.type(text.slice(0, a), { delay });
   await cameraToBox(page, anchorBox, 1.23, 420);
+  await focus(page, composer, 20);
   await composer.type(text.slice(a, b), { delay: Math.max(16, delay - 4) });
   await cameraToBox(page, anchorBox, 1.27, 420);
+  await focus(page, composer, 20);
   await composer.type(text.slice(b), { delay: Math.max(14, delay - 7) });
 }
 
@@ -303,8 +305,8 @@ async function main() {
     });
 
     const askTan = await waitForExpertRoute(page);
-    await focus(page, askTan, 18);
     await cameraTo(page, askTan, 1.23);
+    await focus(page, askTan, 18);
     await caption(page, "Sifu found the right human expert.", 850);
     await ripple(page, askTan);
     await askTan.click();
@@ -343,8 +345,8 @@ async function main() {
     await focusClick(page, reviewUnderstanding, { scale: 1.18, hold: 300 });
     const candidateTitle = page.getByText("Candidate Knowledge Pill", { exact: false });
     await candidateTitle.waitFor({ timeout: 150_000 });
-    await focus(page, candidateTitle, 18);
     await cameraTo(page, candidateTitle, 1.17);
+    await focus(page, candidateTitle, 18);
     await caption(page, "Natural teaching becomes a reviewable candidate.", 900);
     await unfocus(page);
     await cameraReset(page);
@@ -372,8 +374,8 @@ async function main() {
     await focusClick(page, validate, { scale: 1.22, hold: 350 });
     const validatedHeading = page.getByRole("heading", { name: "Teaching validated" });
     await validatedHeading.waitFor({ timeout: 30_000 });
-    await focus(page, validatedHeading, 22);
     await cameraTo(page, validatedHeading, 1.22);
+    await focus(page, validatedHeading, 22);
     await caption(page, "Validated. Attributable. Reusable.", 900);
     await unfocus(page);
     await cameraReset(page);
@@ -402,8 +404,8 @@ async function main() {
         body: "Sifu can now answer from validated organisational knowledge and preserve its provenance.",
       },
     );
-    await focus(page, validated, 22);
     await cameraTo(page, validated, 1.2);
+    await focus(page, validated, 22);
     await caption(page, "Validated organisational knowledge — with provenance.", 1050);
     await unfocus(page);
     await cameraReset(page);
@@ -425,8 +427,8 @@ async function main() {
 
     const caseHeading = page.getByRole("heading", { name: /Harbour Exchange/i });
     if (await caseHeading.count()) {
-      await focus(page, caseHeading, 16);
       await cameraTo(page, caseHeading, 1.12);
+      await focus(page, caseHeading, 16);
       await caption(page, "Pump RUNNING. Water still rising.", 850);
       await unfocus(page);
       await cameraReset(page);
@@ -445,8 +447,8 @@ async function main() {
         body: "The model does not invent the outcome. The governed case logic applies the approved knowledge boundary.",
       },
     );
-    await focus(page, escalate, 34, true);
     await cameraTo(page, escalate, 1.34, 650);
+    await focus(page, escalate, 34, true);
     await impactFlash(page);
     await caption(page, "ESCALATE — human review required.", 1550);
     await sleep(500);
@@ -457,8 +459,8 @@ async function main() {
     await page.getByText("Jennifer Lim", { exact: true }).last().waitFor({ timeout: 30_000 });
     await unfocus(page);
     await cameraReset(page, 320);
-    await focus(page, provenanceCard, 18);
     await cameraTo(page, provenanceCard, 1.18);
+    await focus(page, provenanceCard, 18);
     await caption(page, "Expert: Tan Wei Ming · Validated by: Jennifer Lim", 1100);
     await unfocus(page);
     await cameraReset(page);

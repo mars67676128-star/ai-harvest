@@ -37,6 +37,7 @@ from .models import (
 )
 from .providers import make_provider
 from .service import Service
+from .sifu_agent import attach_sifu_routes
 
 logger = logging.getLogger("harvest")
 bearer = HTTPBearer(auto_error=False)
@@ -49,10 +50,10 @@ def create_app(settings: Settings | None = None, provider=None):
         Database(settings.database), provider or make_provider(settings), known_actors
     )
     app = FastAPI(
-        title="AI HARVEST",
-        version="0.1.0",
-        description="Governed, portable expert capabilities. Synthetic demo; advisory output only.",
-        responses={code: {"model": ErrorEnvelope} for code in (401, 403, 404, 409, 422, 502)},
+        title="SIFU",
+        version="0.2.0",
+        description="Shared Intelligence From Us — governed organisational knowledge transfer.",
+        responses={code: {"model": ErrorEnvelope} for code in (401, 403, 404, 409, 422, 502, 503)},
     )
     app.state.service, app.state.settings = service, settings
 
@@ -134,6 +135,8 @@ def create_app(settings: Settings | None = None, provider=None):
 
     CurrentActor = Annotated[Actor, Depends(identity)]
     prefix = "/api/v1"
+
+    attach_sifu_routes(app, service, settings, identity, prefix)
 
     @app.get("/health", tags=["system"])
     def health():

@@ -25,6 +25,8 @@ class Settings:
     cors_origins: list[str] = field(
         default_factory=lambda: ["http://localhost:3000", "http://localhost:5173"]
     )
+    expert_directory: list[dict] = field(default_factory=list)
+    sifu_max_knowledge_items: int = 20
 
     def __post_init__(self):
         if self.environment not in ("demo", "production"):
@@ -43,6 +45,27 @@ class Settings:
             raise ValueError("Live providers require HARVEST_LLM_API_KEY and HARVEST_LLM_MODEL")
         if self.provider != "mock" and not self.base_url.startswith("https://"):
             raise ValueError("Live provider transport must use HTTPS")
+        if not 1 <= self.sifu_max_knowledge_items <= 100:
+            raise ValueError("SIFU_MAX_KNOWLEDGE_ITEMS must be between 1 and 100")
+        if not isinstance(self.expert_directory, list):
+            raise ValueError("SIFU_EXPERT_DIRECTORY must decode to a JSON list")
+        seen_experts = set()
+        for entry in self.expert_directory:
+            if not isinstance(entry, dict):
+                raise ValueError("Each SIFU expert directory entry must be a JSON object")
+            required = {"id", "name", "role", "skills"}
+            if not required <= entry.keys():
+                raise ValueError("Each SIFU expert entry requires id, name, role and skills")
+            if not all(isinstance(entry[key], str) and entry[key].strip() for key in ("id", "name", "role")):
+                raise ValueError("SIFU expert id, name and role must be nonempty strings")
+            if not isinstance(entry["skills"], list) or not all(
+                isinstance(skill, str) and skill.strip() for skill in entry["skills"]
+            ):
+                raise ValueError("SIFU expert skills must be a list of nonempty strings")
+            if entry["id"] in seen_experts:
+                raise ValueError(f"Duplicate SIFU expert id: {entry['id']}")
+            seen_experts.add(entry["id"])
+
         # Detect duplicate configured actor IDs deterministically
         seen_ids = set()
         for actor in self.tokens.values():
@@ -53,6 +76,7 @@ class Settings:
     @classmethod
     def from_env(cls):
         token_json = os.getenv("HARVEST_AUTH_TOKENS")
+        expert_json = os.getenv("SIFU_EXPERT_DIRECTORY", "[]")
         environment = os.getenv("HARVEST_ENV", "demo")
         if environment == "production" and not token_json:
             raise ValueError("HARVEST_AUTH_TOKENS is required in production")
@@ -72,4 +96,6 @@ class Settings:
             cors_origins=os.getenv(
                 "HARVEST_CORS_ORIGINS", "http://localhost:3000,http://localhost:5173"
             ).split(","),
+            expert_directory=json.loads(expert_json),
+            sifu_max_knowledge_items=int(os.getenv("SIFU_MAX_KNOWLEDGE_ITEMS", "20")),
         )

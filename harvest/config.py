@@ -57,8 +57,7 @@ class Settings:
             if not required <= entry.keys():
                 raise ValueError("Each SIFU expert entry requires id, name, role and skills")
             if not all(
-                isinstance(entry[key], str) and entry[key].strip()
-                for key in ("id", "name", "role")
+                isinstance(entry[key], str) and entry[key].strip() for key in ("id", "name", "role")
             ):
                 raise ValueError("SIFU expert id, name and role must be nonempty strings")
             if not isinstance(entry["skills"], list) or not all(

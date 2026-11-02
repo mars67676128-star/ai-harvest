@@ -289,3 +289,7 @@ def attach_sifu_routes(
     @app.post(prefix + "/sifu/ask", response_model=SifuAnswer, tags=["sifu"])
     def sifu_ask(body: SifuAskRequest, actor: Actor = Depends(identity)):
         return agent.ask(body, actor)
+
+    from .sifu_threads import attach_sifu_thread_routes
+
+    attach_sifu_thread_routes(app, service, settings, identity, prefix)

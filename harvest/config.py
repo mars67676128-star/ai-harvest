@@ -27,6 +27,7 @@ class Settings:
         default_factory=lambda: ["http://localhost:3000", "http://localhost:5173"]
     )
     expert_directory: list[dict] = field(default_factory=list)
+    knowledge_owners: list[dict] = field(default_factory=list)
     sifu_max_knowledge_items: int = 20
 
     def __post_init__(self):
@@ -80,17 +81,51 @@ class Settings:
                 raise ValueError(f"Duplicate SIFU expert id: {entry['id']}")
             seen_experts.add(entry["id"])
 
-        # Detect duplicate configured actor IDs deterministically
+        if not isinstance(self.knowledge_owners, list):
+            raise ValueError("SIFU_KNOWLEDGE_OWNERS must decode to a JSON list")
+        seen_owner_ids = set()
+        owned_domains = set()
+        for entry in self.knowledge_owners:
+            if not isinstance(entry, dict):
+                raise ValueError("Each SIFU knowledge owner entry must be a JSON object")
+            required = {"id", "name", "domains"}
+            if not required <= entry.keys():
+                raise ValueError("Each SIFU knowledge owner requires id, name and domains")
+            if not all(isinstance(entry[key], str) and entry[key].strip() for key in ("id", "name")):
+                raise ValueError("SIFU knowledge owner id and name must be nonempty strings")
+            if not isinstance(entry["domains"], list) or not entry["domains"] or not all(
+                isinstance(domain, str) and domain.strip() for domain in entry["domains"]
+            ):
+                raise ValueError("SIFU knowledge owner domains must be a nonempty string list")
+            if entry["id"] in seen_owner_ids:
+                raise ValueError(f"Duplicate SIFU knowledge owner id: {entry['id']}")
+            overlap = owned_domains.intersection(entry["domains"])
+            if overlap:
+                raise ValueError(f"SIFU domain has multiple Knowledge Owners: {sorted(overlap)[0]}")
+            seen_owner_ids.add(entry["id"])
+            owned_domains.update(entry["domains"])
+
+        # Detect duplicate configured actor IDs deterministically.
         seen_ids = set()
+        actors_by_id = {}
         for actor in self.tokens.values():
             if actor.id in seen_ids:
                 raise ValueError(f"Duplicate configured actor ID: {actor.id}")
             seen_ids.add(actor.id)
+            actors_by_id[actor.id] = actor
+
+        for owner in self.knowledge_owners:
+            actor = actors_by_id.get(owner["id"])
+            if actor is None:
+                raise ValueError(f"SIFU knowledge owner '{owner['id']}' is not a configured actor")
+            if "approver" not in actor.roles:
+                raise ValueError(f"SIFU knowledge owner '{owner['id']}' requires the approver role")
 
     @classmethod
     def from_env(cls):
         token_json = os.getenv("HARVEST_AUTH_TOKENS")
         expert_json = os.getenv("SIFU_EXPERT_DIRECTORY", "[]")
+        owner_json = os.getenv("SIFU_KNOWLEDGE_OWNERS", "[]")
         environment = os.getenv("HARVEST_ENV", "demo")
         if environment == "production" and not token_json:
             raise ValueError("HARVEST_AUTH_TOKENS is required in production")
@@ -110,5 +145,6 @@ class Settings:
                 "HARVEST_CORS_ORIGINS", "http://localhost:3000,http://localhost:5173"
             ).split(","),
             expert_directory=json.loads(expert_json),
+            knowledge_owners=json.loads(owner_json),
             sifu_max_knowledge_items=int(os.getenv("SIFU_MAX_KNOWLEDGE_ITEMS", "20")),
         )

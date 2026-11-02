@@ -33,11 +33,13 @@ function loadOffset(): Offset {
 
 function inferState(): PetState {
   if (document.querySelector(".validation-celebration")) return "proud";
-  if (document.querySelector(".candidate-backdrop, .confirmed-event")) return "learning";
+  if (document.querySelector(".guidance-decision-escalate")) return "alert";
+  if (document.querySelector(".insight-event, .candidate-backdrop, .confirmed-event")) return "learning";
   if (document.querySelector(".review-page .margin-comment")) return "alert";
   if (document.querySelector(".sifu-message .mood-searching")) return "searching";
-  if (document.querySelector(".system-line") && document.querySelector(".human-message.expert")) return "routing";
+  if (document.querySelector(".system-line")) return "routing";
   if (document.querySelector(".sifu-message .mood-thinking")) return "thinking";
+  if (document.querySelector(".knowledge-provenance .provenance-item")) return "proud";
   const active = document.activeElement;
   if (active instanceof HTMLTextAreaElement && active.getAttribute("aria-label") === "Ask Sifu") return "attentive";
   return "idle";

@@ -13,6 +13,20 @@ import {
 
 type Outcome = "answer" | "not_my_area" | "need_more_information" | "dont_know";
 
+function requestTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-SG", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "Asia/Singapore",
+  }).format(date);
+}
+
 export default function ExpertRequestsView() {
   const [requests, setRequests] = useState<ExpertiseRequest[]>([]);
   const [selected, setSelected] = useState<ExpertiseRequest | null>(null);
@@ -186,7 +200,7 @@ export default function ExpertRequestsView() {
       <section className="conversation-page page-fade">
         <div className="conversation-title">
           <button className="back-link" onClick={() => { setSelected(null); setConversation(null); }}>← Expertise requests</button>
-          <span>{selected.status === "responded" ? "Responded" : "Needs your input"}</span>
+          <span>{selected.status === "responded" ? "Responded" : "Needs your input"} · Created {requestTime(selected.created_at)}</span>
         </div>
 
         <div className="conversation-stream">
@@ -279,7 +293,7 @@ export default function ExpertRequestsView() {
             <span className="request-pulse" />
             <span className="timeline-title">
               <strong>{request.conversation_title ?? "Sifu question"}</strong>
-              <small>From {request.created_by ?? request.requested_by} · {request.reason}</small>
+              <small>From {request.created_by ?? request.requested_by} · Created {requestTime(request.created_at)} · {request.reason}</small>
             </span>
             <span>Needs input</span>
             <span>→</span>
@@ -295,7 +309,7 @@ export default function ExpertRequestsView() {
           <button className="timeline-row" key={request.id} onClick={() => void openRequest(request)}>
             <span className="timeline-title">
               <strong>{request.conversation_title ?? "Sifu question"}</strong>
-              <small>Response recorded</small>
+              <small>Response recorded · Created {requestTime(request.created_at)}</small>
             </span>
             <span>Responded</span>
             <span>→</span>

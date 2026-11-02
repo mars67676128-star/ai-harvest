@@ -1,0 +1,96 @@
+:root {
+  --blue: #167f7d;
+  --blue-deep: #0d5b5b;
+  --blue-soft: #eaf7f5;
+  --green: #2f9b7c;
+  --green-soft: #ebf8f2;
+}
+
+.brand-word,
+.topbar-kicker {
+  color: #123f42;
+}
+
+.eyebrow,
+.manuscript-kicker,
+.provenance-label {
+  color: #1b8783;
+}
+
+.ask-empty h1,
+.page-heading h1,
+.review-manuscript h1,
+.validation-celebration h1 {
+  font-family: Georgia, "Times New Roman", serif;
+  color: #12383b;
+  letter-spacing: -0.035em;
+}
+
+.validation-celebration .motto-large {
+  font-family: Georgia, "Times New Roman", serif;
+  color: #123f42;
+}
+
+.new-question:hover,
+.nav-row.active {
+  border-color: rgba(22, 127, 125, 0.16);
+}
+
+.nav-row.active {
+  box-shadow: inset 3px 0 0 #1b8783, inset 0 0 0 1px rgba(23, 32, 51, 0.035);
+}
+
+.send-button,
+.primary-action {
+  background: #123f42 !important;
+  border-color: #123f42 !important;
+}
+
+.send-button:hover,
+.primary-action:hover {
+  background: #0b3032 !important;
+}
+
+.ai-connection.live,
+.sidebar-footer.live {
+  color: #397761;
+}
+
+.ai-connection.live > span,
+.sidebar-footer.live .presence-dot {
+  background: #32a47f;
+  box-shadow: 0 0 0 3px rgba(50, 164, 127, 0.10);
+}
+
+.coverage-full span:first-child::before {
+  background: #32a47f;
+}
+
+.knowledge-provenance {
+  border-top-color: rgba(18, 63, 66, 0.10);
+}
+
+.operational-case-shell .topbar-brand,
+.operational-case-shell .case-title {
+  color: #12383b;
+}
+
+.operational-case-shell .btn-primary {
+  background: #123f42 !important;
+  border-color: #123f42 !important;
+}
+
+.operational-case-shell .btn-primary:hover {
+  background: #0b3032 !important;
+}
+
+.operational-case-shell .case-guidance-kicker,
+.operational-case-shell .provenance-role {
+  color: #1b8783;
+}
+
+.operational-case-shell .badge-success {
+  background: #e8f7f1;
+  color: #23745d;
+  border: 1px solid #c5e7da;
+}

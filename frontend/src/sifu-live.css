@@ -1,0 +1,246 @@
+.ai-connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+  color: #7b8495;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.ai-connection > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #c18a43;
+  box-shadow: 0 0 0 3px rgba(193, 138, 67, 0.09);
+}
+
+.ai-connection.live {
+  color: #4c7b61;
+}
+
+.ai-connection.live > span {
+  background: #4c956c;
+  box-shadow: 0 0 0 3px rgba(76, 149, 108, 0.10);
+}
+
+.sidebar-footer.live .presence-dot {
+  background: #4c956c;
+}
+
+.sidebar-footer.offline .presence-dot {
+  background: #c18a43;
+}
+
+.exchange + .exchange {
+  margin-top: 26px;
+}
+
+.pending-exchange {
+  opacity: 0.9;
+}
+
+.coverage-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 13px;
+  color: #7a8190;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.coverage-line span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.coverage-line span:first-child::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #8d96a6;
+}
+
+.coverage-full span:first-child::before {
+  background: #4c956c;
+}
+
+.coverage-partial span:first-child::before {
+  background: #c18a43;
+}
+
+.coverage-insufficient span:first-child::before {
+  background: #7a6db0;
+}
+
+.coverage-line span + span::before {
+  content: "·";
+  margin-right: 10px;
+  color: #c2c6ce;
+}
+
+.sifu-answer-text {
+  white-space: pre-wrap;
+}
+
+.answer-detail {
+  margin-top: 18px;
+  padding-left: 18px;
+  border-left: 2px solid rgba(47, 66, 96, 0.11);
+}
+
+.answer-detail.muted {
+  border-left-color: rgba(193, 138, 67, 0.28);
+}
+
+.answer-detail strong {
+  display: block;
+  margin-bottom: 7px;
+  color: #2e3748;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.answer-detail ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #596273;
+}
+
+.answer-detail li + li {
+  margin-top: 5px;
+}
+
+.follow-up-question {
+  margin-top: 18px !important;
+  color: #2f394d;
+  font-weight: 600;
+}
+
+.follow-up-question span {
+  display: block;
+  margin-bottom: 5px;
+  color: #8a6a36;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.knowledge-provenance {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(37, 48, 67, 0.08);
+}
+
+.provenance-label {
+  display: block;
+  margin-bottom: 10px;
+  color: #4c7b61;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.provenance-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 18px;
+  row-gap: 2px;
+  padding: 10px 0;
+}
+
+.provenance-item + .provenance-item {
+  border-top: 1px solid rgba(37, 48, 67, 0.055);
+}
+
+.provenance-item strong {
+  color: #273247;
+  font-size: 13px;
+  font-weight: 680;
+}
+
+.provenance-item span {
+  color: #7b8390;
+  font-size: 11px;
+}
+
+.provenance-item span:nth-of-type(1) {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.provenance-item span:nth-of-type(2) {
+  grid-column: 1 / -1;
+}
+
+.current-guidance-note,
+.risk-note {
+  margin-top: 16px !important;
+  padding-left: 16px;
+  border-left: 2px solid rgba(122, 109, 176, 0.25);
+  color: #697184;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.risk-note {
+  border-left-color: rgba(174, 91, 74, 0.32);
+  color: #75564e;
+}
+
+.inline-insight {
+  margin-top: 20px;
+}
+
+.insight-status {
+  color: #776a9c;
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.ai-trace {
+  margin-top: 15px;
+  color: #a0a5af;
+  font-size: 10px;
+  letter-spacing: 0.015em;
+}
+
+.composer textarea:disabled {
+  color: #7c8492;
+  background: transparent;
+  cursor: wait;
+}
+
+.composer button:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+
+@media (max-width: 860px) {
+  .ai-connection {
+    display: none;
+  }
+
+  .provenance-item {
+    display: block;
+  }
+
+  .provenance-item > * {
+    display: block;
+  }
+
+  .provenance-item span {
+    margin-top: 3px;
+  }
+}

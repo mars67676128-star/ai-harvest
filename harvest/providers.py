@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 from pathlib import Path
 from typing import Protocol
 
@@ -20,6 +21,8 @@ from .fixtures import (
     tenant_content,
 )
 
+logger = logging.getLogger("harvest.providers")
+
 
 class LLMProvider(Protocol):
     def structured_generate(
@@ -34,6 +37,38 @@ def prompt_info(operation):
         "prompt_version": version,
         "prompt_hash": hashlib.sha256(text.encode()).hexdigest(),
     }
+
+
+def _strict_response_schema(schema: dict) -> dict:
+    """Adapt a Pydantic JSON schema to OpenAI strict Structured Outputs.
+
+    Pydantic represents fields with Python defaults as optional in JSON Schema. OpenAI
+    strict Structured Outputs instead requires every object property to appear in
+    ``required``. Nullable fields remain nullable through their existing ``anyOf``/null
+    schema, so making the key required does not change the application-level semantics.
+
+    ``default`` annotations are removed because the model must emit every field rather
+    than relying on a server- or client-side default.
+    """
+
+    def normalise(node):
+        if isinstance(node, list):
+            return [normalise(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+
+        cleaned = {
+            key: normalise(value)
+            for key, value in node.items()
+            if key != "default"
+        }
+        properties = cleaned.get("properties")
+        if isinstance(properties, dict):
+            cleaned["required"] = list(properties.keys())
+            cleaned["additionalProperties"] = False
+        return cleaned
+
+    return normalise(schema)
 
 
 class MockProvider:
@@ -85,7 +120,7 @@ class MockProvider:
 
 
 class OpenAIProvider:
-    """OpenAI Responses API provider with explicit reasoning effort and schema validation."""
+    """OpenAI Responses API provider with reasoning and strict Structured Outputs."""
 
     def __init__(self, settings: Settings, transport=None):
         self.settings = settings
@@ -93,12 +128,7 @@ class OpenAIProvider:
 
     def structured_generate(self, operation, payload, schema):
         prompt, meta = prompt_info(operation)
-        instructions = (
-            prompt
-            + "\n\nReturn only one valid JSON object. Do not use markdown fences or commentary."
-            + "\nThe object must match this JSON schema exactly:\n"
-            + json.dumps(schema, ensure_ascii=False)
-        )
+        strict_schema = _strict_response_schema(schema)
         with httpx.Client(
             timeout=self.settings.timeout, transport=self.transport, follow_redirects=False
         ) as client:
@@ -110,15 +140,39 @@ class OpenAIProvider:
                 },
                 json={
                     "model": self.settings.model,
-                    "instructions": instructions,
+                    "instructions": prompt,
                     "input": json.dumps(payload, ensure_ascii=False),
                     "reasoning": {"effort": self.settings.reasoning_effort},
-                    "max_output_tokens": 8000,
+                    "max_output_tokens": 16000,
+                    "text": {
+                        "format": {
+                            "type": "json_schema",
+                            "name": f"{operation}_response",
+                            "strict": True,
+                            "schema": strict_schema,
+                        }
+                    },
                 },
             )
-            response.raise_for_status()
+            request_id = response.headers.get("x-request-id")
+            if not response.is_success:
+                logger.warning(
+                    "OpenAI Responses API returned HTTP %s request_id=%s",
+                    response.status_code,
+                    request_id or "unknown",
+                )
+                response.raise_for_status()
+
             body = response.json()
+            request_id = request_id or body.get("id")
             if body.get("status") != "completed":
+                reason = (body.get("incomplete_details") or {}).get("reason") or body.get("status")
+                logger.warning(
+                    "OpenAI response not completed status=%s reason=%s request_id=%s",
+                    body.get("status"),
+                    reason or "unknown",
+                    request_id or "unknown",
+                )
                 raise ValueError("Incomplete model response")
 
             parts = []
@@ -129,15 +183,22 @@ class OpenAIProvider:
                     if content.get("type") == "output_text":
                         parts.append(content.get("text", ""))
                     elif content.get("type") == "refusal":
+                        logger.warning(
+                            "OpenAI model refused structured output request_id=%s",
+                            request_id or "unknown",
+                        )
                         raise ValueError("Model refused structured output")
 
             text = "".join(parts).strip()
             if not text:
+                logger.warning(
+                    "OpenAI response contained no output_text request_id=%s",
+                    request_id or "unknown",
+                )
                 raise ValueError("Model returned no output text")
             if len(text) > 150000:
                 raise ValueError("Model response exceeds size limit")
             data = json.loads(text)
-            request_id = response.headers.get("x-request-id") or body.get("id")
             return data, {
                 **meta,
                 "provider": "openai",
@@ -215,6 +276,7 @@ def generate(provider: LLMProvider, operation: str, payload: dict, output: type[
         raise
     except Exception as exc:
         # Provider bodies may contain secrets or submitted text; do not echo them.
+        logger.warning("LLM generation failed operation=%s error_type=%s", operation, type(exc).__name__)
         raise DomainError(
             502,
             "LLM_UNAVAILABLE",

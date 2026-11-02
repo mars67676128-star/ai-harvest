@@ -1,0 +1,401 @@
+.sifu-pet-shell {
+  position: fixed;
+  right: 24px;
+  bottom: 22px;
+  z-index: 80;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  user-select: none;
+  touch-action: none;
+  transition: transform 140ms ease;
+}
+
+.sifu-pet-shell.is-dragging {
+  transition: none;
+}
+
+.sifu-pet {
+  position: relative;
+  width: 104px;
+  height: 112px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: grab;
+  filter: drop-shadow(0 14px 24px rgba(30, 41, 59, 0.14));
+}
+
+.sifu-pet-shell.is-dragging .sifu-pet {
+  cursor: grabbing;
+}
+
+.sifu-pet-art {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transform-origin: 50% 100%;
+  animation: sifu-pet-breathe 3.8s ease-in-out infinite;
+}
+
+.sifu-pet:hover .sifu-pet-art {
+  animation: sifu-pet-hover 520ms ease;
+}
+
+.sifu-pet-thought {
+  width: 230px;
+  margin-bottom: 54px;
+  padding: 11px 14px 12px;
+  border: 1px solid rgba(25, 35, 52, 0.08);
+  border-radius: 16px 16px 4px 16px;
+  background: rgba(255, 255, 252, 0.96);
+  box-shadow: 0 16px 38px rgba(30, 41, 59, 0.10);
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+  pointer-events: none;
+  transition: opacity 140ms ease, transform 140ms ease;
+  backdrop-filter: blur(14px);
+}
+
+.sifu-pet-shell:hover .sifu-pet-thought,
+.sifu-pet-shell:focus-within .sifu-pet-thought,
+.sifu-pet-shell.pet-alert .sifu-pet-thought,
+.sifu-pet-shell.pet-proud .sifu-pet-thought {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.sifu-pet-thought strong,
+.sifu-pet-thought span {
+  display: block;
+}
+
+.sifu-pet-thought strong {
+  margin-bottom: 3px;
+  color: #172033;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.sifu-pet-thought span {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.pet-ear,
+.pet-face,
+.pet-mask,
+.pet-beard,
+.pet-robe,
+.pet-sash,
+.pet-arm,
+.pet-tail path,
+.pet-scroll path,
+.pet-scroll circle,
+.pet-orbit circle,
+.pet-orbit path,
+.pet-seal circle,
+.pet-seal path,
+.pet-brow {
+  vector-effect: non-scaling-stroke;
+}
+
+.pet-ear {
+  fill: #6d4b3e;
+  stroke: #1e293b;
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+}
+
+.pet-face {
+  fill: #b7795f;
+  stroke: #1e293b;
+  stroke-width: 2.2;
+}
+
+.pet-mask {
+  fill: #f1d7c5;
+  opacity: 0.96;
+}
+
+.pet-brow {
+  fill: none;
+  stroke: #172033;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+
+.pet-eye {
+  fill: #172033;
+  transform-origin: center;
+  animation: sifu-pet-blink 6s infinite;
+}
+
+.pet-nose {
+  fill: #2d1f22;
+}
+
+.pet-beard {
+  fill: #f3efe6;
+  stroke: #1e293b;
+  stroke-width: 1.7;
+  stroke-linejoin: round;
+}
+
+.pet-robe {
+  fill: #273b5a;
+  stroke: #172033;
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+}
+
+.pet-sash {
+  fill: none;
+  stroke: #d6a85f;
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+
+.pet-arm {
+  fill: none;
+  stroke: #273b5a;
+  stroke-width: 12;
+  stroke-linecap: round;
+}
+
+.pet-tail path {
+  fill: none;
+  stroke: #9c624f;
+  stroke-width: 9;
+  stroke-linecap: round;
+}
+
+.pet-tail path:last-child {
+  stroke: #e8c6aa;
+  stroke-width: 3;
+}
+
+.pet-scroll {
+  opacity: 0;
+  transform-origin: 50% 50%;
+}
+
+.pet-scroll path,
+.pet-scroll circle {
+  fill: #efe4c6;
+  stroke: #6d5943;
+  stroke-width: 1.6;
+}
+
+.pet-orbit,
+.pet-seal {
+  opacity: 0;
+}
+
+.pet-orbit circle,
+.pet-orbit path {
+  fill: #6f7bd9;
+  stroke: none;
+}
+
+.pet-seal circle {
+  fill: #edf8ef;
+  stroke: #4c956c;
+  stroke-width: 2;
+}
+
+.pet-seal path {
+  fill: none;
+  stroke: #3f7f5b;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sifu-pet-state-dot {
+  position: absolute;
+  right: 4px;
+  bottom: 10px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #8b94a7;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.15);
+}
+
+.pet-attentive .sifu-pet-state-dot,
+.pet-thinking .sifu-pet-state-dot,
+.pet-searching .sifu-pet-state-dot,
+.pet-routing .sifu-pet-state-dot {
+  background: #6274c9;
+}
+
+.pet-learning .sifu-pet-state-dot {
+  background: #8a63c4;
+}
+
+.pet-proud .sifu-pet-state-dot {
+  background: #4c956c;
+}
+
+.pet-alert .sifu-pet-state-dot {
+  background: #c58b3f;
+}
+
+.pet-attentive .pet-head {
+  animation: sifu-pet-listen 1.7s ease-in-out infinite alternate;
+}
+
+.pet-thinking .pet-head {
+  animation: sifu-pet-think 2.2s ease-in-out infinite;
+}
+
+.pet-thinking .pet-brow.left {
+  transform: translateY(1px) rotate(-4deg);
+  transform-origin: 62px 52px;
+}
+
+.pet-thinking .pet-brow.right {
+  transform: translateY(-1px) rotate(4deg);
+  transform-origin: 88px 52px;
+}
+
+.pet-searching .pet-scroll,
+.pet-routing .pet-scroll {
+  opacity: 1;
+  animation: sifu-pet-scroll 1.6s ease-in-out infinite alternate;
+}
+
+.pet-searching .pet-orbit,
+.pet-learning .pet-orbit {
+  opacity: 1;
+  animation: sifu-pet-orbit 2s linear infinite;
+  transform-origin: 118px 64px;
+}
+
+.pet-routing .pet-arm.right {
+  animation: sifu-pet-point 900ms ease-in-out infinite alternate;
+  transform-origin: 104px 102px;
+}
+
+.pet-learning .pet-orbit {
+  opacity: 1;
+}
+
+.pet-learning .sifu-pet-art {
+  animation: sifu-pet-learn 1.8s ease-in-out infinite;
+}
+
+.pet-proud .pet-seal {
+  opacity: 1;
+  animation: sifu-pet-seal 1.25s ease-out infinite;
+  transform-origin: 118px 89px;
+}
+
+.pet-proud .sifu-pet-art {
+  animation: sifu-pet-nod 1.5s ease-in-out infinite;
+}
+
+.pet-alert .sifu-pet-art {
+  animation: sifu-pet-alert 1.4s ease-in-out infinite;
+}
+
+.pet-alert .pet-brow.left,
+.pet-alert .pet-brow.right {
+  transform: translateY(2px);
+}
+
+@keyframes sifu-pet-breathe {
+  0%, 100% { transform: translateY(0) scaleY(1); }
+  50% { transform: translateY(-2px) scaleY(1.015); }
+}
+
+@keyframes sifu-pet-hover {
+  0% { transform: translateY(0) rotate(0); }
+  35% { transform: translateY(-6px) rotate(-2deg); }
+  70% { transform: translateY(-2px) rotate(2deg); }
+  100% { transform: translateY(0) rotate(0); }
+}
+
+@keyframes sifu-pet-blink {
+  0%, 47%, 51%, 100% { transform: scaleY(1); }
+  49% { transform: scaleY(0.12); }
+}
+
+@keyframes sifu-pet-listen {
+  from { transform: rotate(0deg) translateY(0); }
+  to { transform: rotate(-3deg) translateY(-1px); }
+}
+
+@keyframes sifu-pet-think {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+@keyframes sifu-pet-scroll {
+  from { transform: translateX(-2px) rotate(-2deg); }
+  to { transform: translateX(2px) rotate(2deg); }
+}
+
+@keyframes sifu-pet-orbit {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes sifu-pet-point {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-10deg); }
+}
+
+@keyframes sifu-pet-learn {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes sifu-pet-seal {
+  0% { transform: scale(0.6) rotate(-12deg); opacity: 0; }
+  35% { transform: scale(1.12) rotate(2deg); opacity: 1; }
+  65%, 100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+
+@keyframes sifu-pet-nod {
+  0%, 100% { transform: rotate(0); }
+  45% { transform: rotate(2deg) translateY(1px); }
+  65% { transform: rotate(-1deg); }
+}
+
+@keyframes sifu-pet-alert {
+  0%, 100% { transform: translateX(0); }
+  35% { transform: translateX(-2px); }
+  70% { transform: translateX(2px); }
+}
+
+@media (max-width: 760px) {
+  .sifu-pet-shell {
+    right: 12px;
+    bottom: 12px;
+  }
+
+  .sifu-pet {
+    width: 82px;
+    height: 90px;
+  }
+
+  .sifu-pet-thought {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sifu-pet-art,
+  .pet-eye,
+  .pet-head,
+  .pet-scroll,
+  .pet-orbit,
+  .pet-arm,
+  .pet-seal {
+    animation: none !important;
+  }
+}

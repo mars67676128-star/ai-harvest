@@ -17,28 +17,28 @@ function replaceRequired(pattern, replacement, label) {
   }
 }
 
-// Clear, submission-friendly output name.
 replaceRequired(
   /const outputPath = path\.join\(outputDir, "Sifu_DemoDay_Take3\.webm"\);/,
   'const outputPath = path.join(outputDir, "Sifu_DemoDay_Final.webm");',
   "output filename",
 );
 
-// Simplify the visual language. The geometry-based box caused several visible misses when
-// React replaced or reflowed UI. Keep the camera motion and click ripple, but never render
-// a focus rectangle. Also remove the floating pet from the capture so it cannot cover text.
+// Zoom-only visual language: never render the geometry-based focus rectangle.
 replaceRequired(
   /#take3-focus\{position:absolute;/,
   "#take3-focus{display:none!important;position:absolute;",
   "disable focus box",
 );
+
+// Keep the mascot, but dock it in a small safe position for the whole recording.
+// The thought bubble is disabled because its 230px width was the main text obstruction.
 replaceRequired(
   /\.sifu-pet-shell\{pointer-events:none !important\}/,
-  ".sifu-pet-shell{display:none !important;pointer-events:none !important}",
-  "hide floating mascot",
+  ".sifu-pet-shell{pointer-events:none!important;right:12px!important;left:auto!important;top:96px!important;bottom:auto!important;transform:scale(.58)!important;transform-origin:top right!important;opacity:.9!important;z-index:70!important;gap:0!important}\n    .sifu-pet-thought{display:none!important}",
+  "dock mascot safely",
 );
 
-// Teaching-validated scene: zoom only, after the new heading is actually rendered.
+// Teaching-validated scene: zoom only after the new heading is stable.
 replaceRequired(
   /    const validatedHeading = page\.getByRole\("heading", \{ name: "Teaching validated" \}\);\n    await validatedHeading\.waitFor\(\{ timeout: 30_000 \}\);\n    await cameraTo\(page, validatedHeading, 1\.22\);\n    await focus\(page, validatedHeading, 22\);\n    await caption\(page, "Validated\. Attributable\. Reusable\.", 900\);\n    await unfocus\(page\);\n    await cameraReset\(page\);/,
   `    const validatedHeading = page.getByRole("heading", { name: "Teaching validated" });
@@ -51,9 +51,7 @@ replaceRequired(
   "Teaching validated zoom",
 );
 
-// Reuse scene: wait for the actual provenance component rather than model wording. The
-// recording-only backend stabilizer guarantees this component from the genuinely validated
-// candidate if the live model omits citation metadata.
+// Reuse scene: wait for the actual provenance component, not model wording.
 replaceRequired(
   /    const validated = page\.getByText\(\/Validated organisational knowledge\/i\)\.first\(\);[\s\S]*?    await cameraReset\(page\);\n\n    await chapter\(page, \{\n      kicker: "Beyond Q&A",/,
   `    const provenance = page.locator(".knowledge-provenance").last();
@@ -85,7 +83,7 @@ replaceRequired(
   "validated reuse state",
 );
 
-// Slightly slower than Take 3, but still far tighter than Take 2.
+// Slightly slower than Take 3, but still much tighter than Take 2.
 source = source
   .replaceAll("hold: 2300", "hold: 2800")
   .replaceAll("hold: 2500", "hold: 3000")
@@ -104,7 +102,6 @@ source = source.replaceAll('Saved Take 3 recording to', 'Saved final recording t
 
 await fs.writeFile(runtimePath, source, "utf8");
 try {
-  // Syntax-check the generated recorder before any browser is launched.
   execFileSync(process.execPath, ["--check", runtimePath], { stdio: "inherit" });
   if (process.env.TAKE3_FINAL_PATCH_CHECK_ONLY === "1") {
     console.log("Final recorder patch patterns and generated runtime syntax: OK");

@@ -24,6 +24,36 @@ class ThreadProvider:
                 "unresolved_questions": [],
             }, {"provider": "test", "model": "test-model", "live": True}
 
+        if payload["approved_knowledge"]:
+            source = payload["approved_knowledge"][0]
+            return {
+                "coverage": "full",
+                "basis": "validated_knowledge",
+                "answer": "Validated guidance now covers this condition: verify actual discharge and the water-level trend rather than relying on RUNNING alone.",
+                "known_points": [source["description"]],
+                "missing_information": [],
+                "follow_up_question": None,
+                "recommended_expert": None,
+                "citations": [
+                    {
+                        "pill_id": source["pill_id"],
+                        "version": source["version"],
+                        "title": source["title"],
+                        "domain": source["domain"],
+                        "source_expert": source["source_expert"],
+                        "validator": source["validator"],
+                    }
+                ],
+                "risk": "medium",
+                "risk_reason": "Drainage faults can worsen if effective discharge is not verified.",
+                "reusable_insight": {
+                    "detected": False,
+                    "summary": None,
+                    "rationale": None,
+                    "needs_expert_confirmation": True,
+                },
+            }, {"provider": "test", "model": "test-model", "live": True}
+
         has_expert = any(turn["role"] == "expert" for turn in payload["conversation"])
         if has_expert:
             response = {
@@ -179,6 +209,24 @@ def test_persistent_employee_to_expert_to_sifu_thread(tmp_path):
         assert validated.json()["status"] == "validated"
         assert validated.json()["owner_decision"]["actor"] == "approver"
 
+        learned = client.post(
+            BASE + "/sifu/conversations",
+            headers=auth("operator"),
+            json={"question": "The pump says RUNNING. Does that prove it is draining?"},
+        )
+        assert learned.status_code == 201
+        learned_answer = learned.json()["messages"][-1]["answer"]
+        assert learned_answer["coverage"] == "full"
+        assert learned_answer["basis"] == "validated_knowledge"
+        assert learned_answer["citations"][0] == {
+            "pill_id": candidate["id"],
+            "version": "1",
+            "title": "RUNNING status does not confirm effective drainage",
+            "domain": "Technical Services",
+            "source_expert": "Tan Wei Ming",
+            "validator": "Jennifer Lim",
+        }
+
         employee_view = client.get(
             BASE + f"/sifu/conversations/{conversation_id}", headers=auth("operator")
         )
@@ -187,7 +235,12 @@ def test_persistent_employee_to_expert_to_sifu_thread(tmp_path):
         assert body["expertise_requests"][0]["status"] == "responded"
         assert body["messages"][-1]["answer"]["reusable_insight"]["detected"] is True
 
-    assert [call[0] for call in provider.calls] == ["sifu_answer", "sifu_answer", "sifu_candidate"]
+    assert [call[0] for call in provider.calls] == [
+        "sifu_answer",
+        "sifu_answer",
+        "sifu_candidate",
+        "sifu_answer",
+    ]
 
 
 def test_employee_cannot_route_unrecommended_expert(tmp_path):

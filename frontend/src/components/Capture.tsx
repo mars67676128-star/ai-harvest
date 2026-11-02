@@ -1,6 +1,8 @@
 // Capture know-how: guided expert interview → AI draft of a pill → human review.
 // Answers Keppel's first requirement: collect knowledge that is not already documented.
 import { useEffect, useState } from "react";
+import { ClarificationPanel, ReleasePath, StageChip } from "./GovernanceBits";
+import { AiSteps, EXTRACT_STEPS, minStepsTime } from "./AiSteps";
 import { createCapture, extractCapture, getElicitation, getRole } from "../api";
 import type { ElicitationQuestion, ExtractionRecord } from "../api";
 import { DEMO_INTERVIEWS } from "../lib/demoInterviews";
@@ -33,6 +35,31 @@ const PILL_FOR_DOMAIN: Record<string, string> = {
   "Tenant Experience": "tenant.incident.continuity",
 };
 
+// The example interviews are written as labelled parts ("Scenario:", "Scope:", ...).
+// Shown as structured notes; the AI still receives the exact full text.
+const NOTE_PARTS: Array<{ re: RegExp; label: string; folded?: boolean; keep?: boolean }> = [
+  { re: /^Scenario:\s*/i, label: "What happened" },
+  { re: /^(The scope is narrow:|Scope:)\s*/i, label: "Where it applies" },
+  { re: /^Required observations:\s*/i, label: "What to check" },
+  { re: /^Allowed human actions[^:]*:\s*/i, label: "What people may do" },
+  { re: /^Prohibited actions:\s*/i, label: "Never allowed" },
+  { re: /^Guardrails:\s*/i, label: "Safety limits" },
+  { re: /^Decision rules:\s*/i, label: "Rules of thumb" },
+  { re: /^Evidence basis:\s*/i, label: "Based on" },
+  { re: /^Test scenarios[^:]*:\s*/i, label: "How to test it", folded: true },
+  { re: /^I consider\b/i, label: "Expert's sign-off", folded: true, keep: true },
+];
+
+function toNotes(text: string): Array<{ label: string; body: string; folded: boolean }> {
+  return text.split(/\n\s*\n/).map((para, i) => {
+    const part = NOTE_PARTS.find((p) => p.re.test(para));
+    if (!part) return { label: i === 0 ? "About this interview" : "Notes", body: para, folded: false };
+    const body = part.keep ? para : para.replace(part.re, "");
+    const first = body.split(/\s/)[0];
+    return { label: part.label, body: first.includes("_") ? body : body.charAt(0).toUpperCase() + body.slice(1), folded: !!part.folded };
+  });
+}
+
 function cond(c: { input: string; op: string; value: boolean | number | string }) {
   const label = INPUT_PLAIN[c.input] ?? c.input.replace(/_/g, " ");
   if (typeof c.value === "boolean") return `${label}: ${c.op === "ne" ? (c.value ? "no" : "yes") : c.value ? "yes" : "no"}`;
@@ -50,6 +77,12 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<ExtractionRecord | null>(null);
+  const [mode, setMode] = useState<"notes" | "text">("notes");
+  // Follow-up answers (live AI only): the exact text sent last time, the expert's
+  // answers to the AI's open questions, and every Q/A already sent to the AI.
+  const [sentText, setSentText] = useState("");
+  const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [answered, setAnswered] = useState<{ q: string; a: string }[]>([]);
 
   useEffect(() => {
     getElicitation().then(setQuestions).catch(() => setQuestions([]));
@@ -60,8 +93,20 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
     setTitle(DEMO_INTERVIEWS[i].title);
     setDomain(DEMO_INTERVIEWS[i].domain);
     setTranscript(cleanText(DEMO_INTERVIEWS[i].transcript));
+    setMode("notes");
     setDraft(null);
     setError(null);
+    setAnswered([]);
+    setAnswers({});
+  };
+  const writeOwn = () => {
+    setMode("text");
+    setTitle("");
+    setTranscript("");
+    setDraft(null);
+    setError(null);
+    setAnswered([]);
+    setAnswers({});
   };
   const edited = transcript.trim() !== cleanText(DEMO_INTERVIEWS[which].transcript);
   const transcriptTooShort = transcript.trim().length < 30;
@@ -71,22 +116,44 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
     (d) => transcript.trim() === cleanText(d.transcript)
   );
 
-  const run = async () => {
+  const run = () => {
+    // An unedited example is sent exactly as recorded (the offline demo AI matches it word-for-word).
+    const example = DEMO_INTERVIEWS.find((d) => transcript.trim() === cleanText(d.transcript));
+    setAnswered([]);
+    setAnswers({});
+    return draftFrom(example ? example.transcript : transcript, isDemoFixture);
+  };
+
+  // Live AI only: send the same interview again, plus the expert's answers to the AI's questions.
+  const redraft = (qs: string[]) => {
+    const fresh = qs
+      .map((q, i) => ({ q, a: (answers[i] ?? "").trim() }))
+      .filter((x) => x.a.length > 0);
+    if (fresh.length === 0) return;
+    const block = fresh.map((x) => `Q: ${x.q}\nA: ${x.a}`).join("\n\n");
+    const text = `${sentText.trimEnd()}\n\nFollow-up answers from the expert:\n\n${block}`;
+    setAnswered((prev) => [...prev, ...fresh]);
+    setAnswers({});
+    return draftFrom(text, false);
+  };
+
+  const draftFrom = async (text: string, synthetic: boolean) => {
     setBusy(true);
     setError(null);
     setDraft(null);
     try {
-      const cap = await createCapture({ title, transcript, domain: domain as never, synthetic: isDemoFixture });
+      const cap = await createCapture({ title, transcript: text, domain: domain as never, synthetic });
+      setSentText(text);
       const started = Date.now();
       const ex = await extractCapture(cap.id);
-      const wait = 2800 - (Date.now() - started);
+      const wait = minStepsTime(EXTRACT_STEPS) - (Date.now() - started);
       if (wait > 0) await new Promise((r) => setTimeout(r, wait));
       setDraft(ex);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(
         msg.includes("MOCK_FIXTURE_ONLY")
-          ? "The offline demo AI can only read the two recorded interviews word-for-word. To extract from your own interview, configure a live AI model (HARVEST_LLM_PROVIDER=tencent). Or press a “Load example” button to continue the demo."
+          ? "The offline demo AI can only read the two recorded interviews word-for-word. To extract from your own interview, connect a live AI model. Or press a “Load example” button to continue the demo."
           : msg.includes("LLM_UNAVAILABLE")
           ? "The live AI model is unavailable or returned invalid output. No knowledge was changed. Check server credentials (HARVEST_LLM_API_KEY, HARVEST_LLM_MODEL) and try again, or switch to demo mode."
           : msg
@@ -174,24 +241,42 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
               </select>
             </label>
           </div>
-          <textarea
-            className="cap-text"
-            value={transcript}
-            onChange={(e) => { setTranscript(e.target.value); setDraft(null); }}
-            rows={7}
-            aria-label="Interview transcript"
-            placeholder="Paste or type the full expert interview here…"
-          />
+          {mode === "notes" ? (
+            <dl className="cap-notes" aria-label="Interview notes">
+              {toNotes(transcript).map((n, i) => n.folded ? (
+                <details key={i} className="cap-note cap-note-folded">
+                  <summary>{n.label}</summary>
+                  <dd>{n.body}</dd>
+                </details>
+              ) : (
+                <div key={i} className={`cap-note ${n.label === "About this interview" ? "cap-note-about" : ""}`}>
+                  <dt>{n.label}</dt>
+                  <dd>{n.body}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <textarea
+              className="cap-text"
+              value={transcript}
+              onChange={(e) => { setTranscript(e.target.value); setDraft(null); setAnswered([]); }}
+              rows={9}
+              aria-label="Interview transcript"
+              placeholder="Type or paste the expert's answers here…"
+            />
+          )}
           <div className="cap-actions">
             <span className="text-muted text-sm">
-              {transcriptTooShort
-                ? "Interview needs at least 30 characters."
+              {mode === "notes"
+                ? <>Interview notes. The AI reads all of them, including the folded parts. <button type="button" className="link-btn" onClick={writeOwn}>Write your own instead</button></>
+                : transcriptTooShort
+                ? "Write at least a few sentences."
                 : edited
-                ? "Free-form interview — a live model reads any text. The offline demo AI only reads the two example recordings."
+                ? "Your own interview. The live AI model reads any text; the offline demo AI only reads the two examples."
                 : "Interview answers, transcribed."}
             </span>
             <div className="flex gap-8">
-              {edited && <button className="btn btn-quiet" onClick={() => pick(which)}>Use the recording</button>}
+              {mode === "text" && <button className="btn btn-quiet" onClick={() => pick(which)}>Back to the example</button>}
               <button className="btn btn-primary" onClick={run} disabled={busy || !isExpert || transcriptTooShort}>
                 {busy ? "AI is drafting…" : "Draft a pill with AI"}
               </button>
@@ -202,13 +287,21 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
               Only the expert records their own interview. Switch to <b>Expert · {tan.name}</b> (top right) to run this step.
             </div>
           )}
-          {error && <div className="error-box mt-8">{error}</div>}
-          {busy && (
-            <div className="ai-skeleton mt-16" aria-label="Drafting">
-              <div className="ai-writing">AI is reading the interview and drafting rules…</div>
-              <span /><span /><span />
+          {answered.length > 0 && (
+            <div className="cap-followups">
+              <div className="cap-label">Follow-up answers sent with the interview ({answered.length})</div>
+              <dl>
+                {answered.map((x, i) => (
+                  <div key={i} className="cap-followup">
+                    <dt>{x.q}</dt>
+                    <dd>{x.a}</dd>
+                  </div>
+                ))}
+              </dl>
             </div>
           )}
+          {error && <div className="error-box mt-8">{error}</div>}
+          {busy && <AiSteps steps={EXTRACT_STEPS} label="AI is drafting a pill" />}
         </div>
       </section>
 
@@ -219,9 +312,66 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
           <div className="callout callout-ai">
             <b>AI-generated, not authoritative.</b> {cleanText(draft.summary)}
             <div className="text-sm mt-8">
+              {answered.length > 0 && <>Redrafted with {answered.length} follow-up answer{answered.length === 1 ? "" : "s"} · </>}
               {draft.ai?.live ? "Live model" : "Offline demo AI (recorded output)"} · {String(draft.ai?.model ?? "")} · prompt {String(draft.ai?.prompt_version ?? "")}
             </div>
           </div>
+
+          {(() => {
+            const qs = [...c.unresolved_questions, ...c.contradictions, ...draft.elicitation_gaps];
+            const held = qs.length > 0;
+            return (
+              <>
+                <div className="gov-chips mb-8">
+                  <StageChip k="ai_draft" label={draft.ai?.live ? "Live AI draft" : "AI-generated draft"} />
+                  <StageChip k={held ? "clarification" : "needs_review"} label={held ? "Clarification required" : "Needs review"} />
+                </div>
+                <ReleasePath steps={[
+                  { label: "Expert interview", state: "done" },
+                  { label: draft.ai?.live ? "Live AI draft" : "AI draft", state: "done" },
+                  { label: held ? "Blocked pending expert clarification" : "Validation", state: held ? "held" : "current" },
+                  { label: "Human review / correction if needed", state: "todo" },
+                  { label: "Revalidation", state: "todo" },
+                  { label: "Approved Pill", state: "todo" },
+                ]} />
+                {held && <ClarificationPanel questions={qs} />}
+                {held && draft.ai?.live && isExpert && (
+                  <div className="cap-answer">
+                    <h3>Answer the AI's questions</h3>
+                    <p className="text-muted text-sm">
+                      The AI redrafts from the same interview plus your answers. Leave a question blank if you don't know yet.
+                    </p>
+                    <ol className="cap-answer-list">
+                      {qs.map((q, i) => (
+                        <li key={`${i}-${q}`}>
+                          <label>
+                            <span className="cap-answer-q">{q}</span>
+                            <textarea
+                              className="cap-text"
+                              rows={2}
+                              value={answers[i] ?? ""}
+                              onChange={(e) => setAnswers((a) => ({ ...a, [i]: e.target.value }))}
+                              placeholder="Your answer"
+                            />
+                          </label>
+                        </li>
+                      ))}
+                    </ol>
+                    <div className="cap-actions">
+                      <span className="text-muted text-sm">Your answers are kept with the interview as evidence.</span>
+                      <button
+                        className="btn btn-primary"
+                        onClick={() => redraft(qs)}
+                        disabled={busy || qs.every((_, i) => !(answers[i] ?? "").trim())}
+                      >
+                        Answer and redraft
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
           <div className="draft-grid">
             <div className="draft-block">
@@ -257,9 +407,9 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
             </div>
             <div className="draft-block">
               <div className="section-heading">Questions still open</div>
-              {[...c.unresolved_questions, ...draft.elicitation_gaps].length === 0
+              {[...c.unresolved_questions, ...c.contradictions, ...draft.elicitation_gaps].length === 0
                 ? <p className="text-muted text-sm">None flagged.</p>
-                : <ul className="plain-list">{[...c.unresolved_questions, ...draft.elicitation_gaps].map((q) => <li key={q}>{q}</li>)}</ul>}
+                : <p className="text-sm">Listed above under expert clarification.</p>}
             </div>
           </div>
         </section>
@@ -271,7 +421,7 @@ export function Capture({ onGoToPill }: { onGoToPill: (pillId: string) => void }
         {PILL_FOR_DOMAIN[domain] ? (
           <div className="how-teaser">
             In this demo, a similar interview already became <a onClick={() => onGoToPill(PILL_FOR_DOMAIN[domain])}>
-              {domain === "Asset Operations" ? "Monsoon near-miss triage" : "Tenant incident continuity"} →</a>
+              {domain === "Asset Operations" ? "Monsoon near-miss triage" : "Tenant incident continuity"}</a>
           </div>
         ) : (
           <div className="how-teaser">

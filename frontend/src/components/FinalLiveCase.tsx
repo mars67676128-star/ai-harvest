@@ -21,12 +21,14 @@ const TENANT_ID = "tenant.incident.continuity";
 type Scenario = "rising" | "backflow";
 
 const ACTION_LABELS: Record<string, string> = {
-  inspect_drainage: "Request drainage assessment",
-  monitor_trend: "Continue verified observation",
-  review_access_plan: "Review access plan",
-  draft_tenant_update: "Draft tenant update",
-  tenant_liaison: "Maintain tenant liaison",
+  inspect_drainage: "Request a drainage assessment",
+  monitor_trend: "Keep monitoring",
+  review_access_plan: "Change the access plan",
+  draft_tenant_update: "Draft a tenant update",
+  tenant_liaison: "Keep tenants informed",
 };
+
+const READING_ORDER = ["water_rise_mm_min", "pump_running", "drain_backflow", "critical_equipment_exposed", "alternative_route_verified"];
 
 function humanise(value: string): string {
   return value.replace(/^demo[-_]/, "").replace(/[_-]+/g, " ").replace(/^./, (c) => c.toUpperCase());
@@ -80,9 +82,11 @@ function escalationRoles(rec: RecommendationRecord): string[] {
 export function LiveCase({
   onGoToEvolution,
   onGoToPill,
+  openRecId,
 }: {
   onGoToEvolution?: (recId: string) => void;
   onGoToPill?: (pillId: string) => void;
+  openRecId?: string | null;
 }) {
   const role = getRole();
   const [pills, setPills] = useState<PillVersion[]>([]);
@@ -120,6 +124,7 @@ export function LiveCase({
         setRecommendations(hydrated);
         setSelectedRec((current) => {
           if (current) return hydrated.find((r) => r.id === current.id) ?? current;
+          if (openRecId) return hydrated.find((r) => r.id === openRecId) ?? null; // opened from a Home task
           return null; // Live Case opens empty; past cases are in the dropdown
         });
       } else {
@@ -131,7 +136,7 @@ export function LiveCase({
     } finally {
       setLoading(false);
     }
-  }, [role]);
+  }, [role, openRecId]);
 
   useEffect(() => { void loadData(); }, [loadData]);
 
@@ -231,212 +236,148 @@ export function LiveCase({
   const conflict = selectedRec?.result.blocked_actions.includes("review_access_plan") ?? false;
   const roles = selectedRec ? escalationRoles(selectedRec) : [];
 
+  const decision = selectedRec?.result.decision;
+  const fromAlarm = !!selectedRec && Object.values(selectedRec.observations ?? {}).some((o) => /^BMS\b/i.test(o.source));
+  const verdictWord = decision === "ESCALATE" ? "Escalate" : decision === "ABSTAIN" ? "No advice" : "Review on site";
+  const roleText = roles.map((r) => `the ${r.charAt(0).toLowerCase()}${r.slice(1)}`);
+  const verdictLine = decision === "ESCALATE"
+    ? `Call ${roleText.length > 1 ? `${roleText.slice(0, -1).join(", ")} and ${roleText[roleText.length - 1]}` : roleText[0] ?? "the duty team"}.`
+    : decision === "ABSTAIN"
+    ? "There aren't enough verified readings to advise. Check on site."
+    : "A person should look before anything changes.";
+  const obsEntries = Object.entries(shownObs).filter(([key]) => ["water_rise_mm_min", "pump_running", "drain_backflow", "critical_equipment_exposed", "alternative_route_verified"].includes(key))
+    .sort(([a], [b]) => READING_ORDER.indexOf(a) - READING_ORDER.indexOf(b));
+
   return (
-    <div>
-      <div className="case-header">
-        <div className="flex-between flex-wrap gap-16">
-          <div>
-            <div className="flex gap-8 flex-wrap" style={{ alignItems: "center" }}>
-              <span className="case-title">Harbour Exchange — Basement Sump, Wet Weather</span>
-            </div>
-            <div className="case-subtitle">Office asset · basement sump · heavy-rain scenario</div>
-          </div>
-          {recommendations.length > 0 && (
-            <select className="rec-select" value={selectedRec?.id ?? ""} onChange={(e) => void handleSelect(e.target.value)}>
-              <option value="" disabled>Past cases ({recommendations.length})</option>
-              {recommendations.map((r) => (
-                <option key={r.id} value={r.id}>{r.result.decision === "HUMAN_REVIEW" ? "Needs review" : humanise(r.result.decision)} · {sgTime(r.created_at)}</option>
-              ))}
+    <div className="lc">
+      <header className="lc-head">
+        <div>
+          <h1 className="lc-title">Basement sump, Harbour Exchange</h1>
+          <p className="lc-sub">Heavy rain. The sump should be pumping water out of the basement.</p>
+        </div>
+        {recommendations.length > 0 && (
+          <select className="rec-select" aria-label="Open a past case" value={selectedRec?.id ?? ""} onChange={(e) => void handleSelect(e.target.value)}>
+            <option value="" disabled>Past cases ({recommendations.length})</option>
+            {recommendations.map((r) => (
+              <option key={r.id} value={r.id}>{sgTime(r.created_at)}, {r.result.decision === "HUMAN_REVIEW" ? "review on site" : r.result.decision === "ESCALATE" ? "escalate" : "no advice"}</option>
+            ))}
+          </select>
+        )}
+      </header>
+
+      <section className="lc-panel" aria-label="Readings">
+        <div className="lc-panel-bar">
+          <label className="lc-panel-pick">
+            <span>Readings</span>
+            <select className="role-select" value={scenario} onChange={(e) => setScenario(e.target.value as Scenario)} disabled={role !== "operator" || busy}>
+              <option value="rising">Example: pump running, water rising</option>
+              <option value="backflow" disabled={!supportsBackflow}>Example: water steady, drain backing up</option>
             </select>
+          </label>
+          {role === "operator" ? (
+            <button className="btn btn-primary" onClick={handleRun} disabled={busy}>{busy ? "Checking…" : "Check these readings"}</button>
+          ) : (
+            <DemoHint>The operator on duty runs checks. Switch to Operator at top right.</DemoHint>
           )}
         </div>
-      </div>
-
-      <div className="scenario-context">
-        <b>The situation.</b> During heavy rain, the basement sump should drain water away.
-      </div>
-
-      <div className="card mb-16">
-        <div className="card-body">
-          <div className="flex-between flex-wrap gap-16">
-            <div>
-              <div className="section-heading">Load example readings</div>
-              <select className="role-select" value={scenario} onChange={(e) => setScenario(e.target.value as Scenario)} disabled={role !== "operator" || busy}>
-                <option value="rising">Original: pump running + water rising</option>
-                <option value="backflow" disabled={!supportsBackflow}>
-                  Learned: flat water + drain backflow
-                </option>
-              </select>
+        <div className="lc-readings">
+          {obsEntries.map(([key, value]) => (
+            <div className="lc-reading" key={key}>
+              <div className="lc-reading-name">{readingLabel(key)}</div>
+              <div className="lc-reading-value">{readingValue(key, value.value, value.unit)}</div>
+              <div className="lc-reading-src">{cleanText(value.source) === "Verified reading" ? "Verified" : cleanText(value.source)}, {sgTime(value.observed_at).split(", ").pop()}</div>
             </div>
-            {role === "operator" ? (
-              <button className="btn btn-primary" onClick={handleRun} disabled={busy}>
-                {busy ? "Running…" : "Run Operational Assessment"}
-              </button>
-            ) : (
-              <DemoHint>Assessments are run by the operator on duty — switch to Operator at top right.</DemoHint>
-            )}
-          </div>
+          ))}
         </div>
-      </div>
-
-
-      <div className="tile-grid" style={{ marginBottom: 20 }}>
-        {Object.entries(shownObs).filter(([key]) => ["pump_running", "water_rise_mm_min", "alternative_route_verified", "critical_equipment_exposed", "drain_backflow"].includes(key)).map(([key, value]) => (
-          <div className="tile" key={key}>
-            <div className="tile-label">{readingLabel(key)}</div>
-            <div className="tile-value">{readingValue(key, value.value, value.unit)}</div>
-            <div className="tile-sub">{[value.quality === "verified" ? "Verified" : value.quality, cleanText(value.source) === "Verified reading" ? "" : cleanText(value.source), sgTime(value.observed_at)].filter(Boolean).join(" · ")}</div>
-          </div>
-        ))}
-      </div>
+      </section>
 
       {error && <div className="error-box mb-16">{friendlyError(error)}</div>}
 
       {!selectedRec && (
-        <div className="callout callout-info">
-          No case open. {role === "operator" ? "Run the assessment above to start one, or open a past case from the dropdown." : "Open a past case from the dropdown. Assessments are run by the operator on duty."}
-        </div>
+        <p className="lc-empty">{role === "operator" ? "No case open. Check the readings above, or open a past case." : "No case open. Open a past case from the list above."}</p>
       )}
 
       {selectedRec && (
         <>
-          <div className="source-attribution">
-            <span className="source-label">Based on approved pills:</span>
-            {selectedRec.capabilities.map((cap) => (
-              <span key={cap.pill_id} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                <span className="pill-link" onClick={() => onGoToPill?.(cap.pill_id)}>
-                  {exactPills[cap.pill_id]?.content.name ?? cap.pill_id}
-                </span>
-                <span className="source-version">v{cap.version}</span>
-              </span>
-            ))}
-          </div>
-
-          <div className={selectedRec.result.decision === "ESCALATE" ? "callout callout-warning mb-16" : "callout callout-info mb-16"}>
-            <strong>{selectedRec.result.decision === "HUMAN_REVIEW" ? "Needs review" : humanise(selectedRec.result.decision)}</strong>
-            {" · "}Advice only
-            <br />{cleanText(selectedRec.result.human_responsibility)}
-          </div>
+          {fromAlarm && (
+            <p className="lc-alarm"><span className="lc-alarm-dot" aria-hidden="true" />Raised automatically by the building system (BMS alarm) at {sgTime(selectedRec.created_at)}</p>
+          )}
+          <section className={`lc-verdict lc-verdict-${(decision ?? "").toLowerCase()}`} aria-live="polite">
+            <div className="lc-verdict-word">{verdictWord}</div>
+            <div className="lc-verdict-text">
+              <p className="lc-verdict-line">{verdictLine}</p>
+              <p className="lc-verdict-note">Advice only. You make the call; Sifu doesn't trigger equipment or send messages.</p>
+              <p className="lc-verdict-src">
+                From{" "}
+                {selectedRec.capabilities.map((cap, i) => (
+                  <span key={cap.pill_id}>
+                    {i > 0 && " and "}
+                    <button type="button" className="link-btn" onClick={() => onGoToPill?.(cap.pill_id)}>{exactPills[cap.pill_id]?.content.name ?? cap.pill_id} v{cap.version}</button>
+                  </span>
+                ))}
+              </p>
+            </div>
+          </section>
 
           {conflict && (
-            <div className="conflict-label">Conflict · 2 pills disagree</div>
-          )}
-          {conflict && (
-            <div className="conflict-card">
-              <div className="conflict-side conflict-side-proposes">
-                <div className="conflict-domain">Asset Operations proposes</div>
-                <div className="conflict-action">Review access plan</div>
-                <div className="conflict-reason">Operational continuity suggests reviewing an access plan.</div>
-              </div>
-              <div className="conflict-divider">vs</div>
-              <div className="conflict-side conflict-side-blocks">
-                <div className="conflict-domain">Tenant Experience blocks</div>
-                <div className="conflict-action">Alternative route unverified</div>
-                <div className="conflict-reason">Blocked until the other route is checked safe.</div>
-              </div>
-            </div>
-          )}
-
-          {roles.length > 0 && (
-            <div className="card mb-16">
-              <div className="card-header"><span className="card-title">Who Must Act</span></div>
-              <div className="card-body"><div className="flex gap-8 flex-wrap">{roles.map((r) => <span className="escalation-role-chip" key={r}>{r}</span>)}</div></div>
-            </div>
-          )}
-
-          {selectedRec.result.actions.length > 0 && (
-            <div className="card mb-16">
-              <div className="card-header"><span className="card-title">Recommended Actions</span><span className="card-meta">all require human authorisation</span></div>
-              <div className="card-body"><div className="action-list">{selectedRec.result.actions.map((a) => (
-                <div className="action-item" key={a.id}><div className="action-item-content"><div className="action-item-title">{actionLabel(a.id)}</div><div className="action-item-desc">{a.description}</div></div><span className="badge badge-warning">Authorisation required</span></div>
-              ))}</div></div>
-            </div>
-          )}
-
-          {selectedRec.result.blocked_actions.length > 0 && (
-            <div className="callout callout-danger mb-16"><strong>Blocked actions:</strong> {selectedRec.result.blocked_actions.map(actionLabel).join(", ")}</div>
-          )}
-
-          <div className="card mb-16">
-            <div className="card-header"><span className="card-title">Why this recommendation</span></div>
-            <div className="card-body">
-              {selectedRec.capabilities.map((cap) => (
-                <div key={cap.pill_id} className="mb-16">
-                  <div className="pill-prov-name">{exactPills[cap.pill_id]?.content.name ?? cap.pill_id} · v{cap.version}</div>
-                  {cap.trace.length === 0 ? <div className="text-muted">No rule fired.</div> : cap.trace.map((trace) => {
-                    const rule = exactPills[cap.pill_id]?.content.rules.find((r) => r.id === trace.rule_id);
-                    return (
-                      <div className={`rule-card ${trace.category}`} key={trace.rule_id}>
-                        <div className="rule-card-name">{rule ? `If ${conditionsText(rule.when).toLowerCase()}` : humanise(trace.rule_id)}</div>
-                        <div className="rule-card-rationale">{trace.rationale}</div>
-                        <div className="rule-card-evidence">Readings: {Object.entries(trace.observations).map(([k, o]) => `${readingLabel(k)}: ${readingValue(k, o.value, o.unit)}`).join(" · ")}</div>
-                      </div>
-                    );
-                  })}
+            <section className="lc-section">
+              <h2 className="lc-h2">The two teams' rules disagree</h2>
+              <div className="lc-conflict">
+                <div className="lc-side">
+                  <div className="lc-side-who">Asset Operations suggests</div>
+                  <div className="lc-side-what">Change the access plan</div>
+                  <div className="lc-side-why">Water is rising, so move people away from the basement entrance.</div>
                 </div>
-              ))}
-            </div>
-          </div>
+                <div className="lc-vs" aria-hidden="true">vs</div>
+                <div className="lc-side lc-side-block">
+                  <div className="lc-side-who">Tenant Experience blocks it</div>
+                  <div className="lc-side-what">The other entrance hasn't been checked</div>
+                  <div className="lc-side-why">Tenants can't be sent another way until it's checked safe.</div>
+                </div>
+              </div>
+            </section>
+          )}
 
-          <div className="card mb-16">
-            <div className="card-header"><span className="card-title">Pill versions used</span></div>
-            <div className="card-body">
-              {selectedRec.capabilities.map((cap) => {
-                const pill = exactPills[cap.pill_id];
-                return (
-                  <div className="pill-provenance mb-16" key={cap.pill_id}>
-                    <div className="pill-prov-header"><div><div className="pill-prov-name">{pill?.content.name ?? "Pill"}</div></div><span className="badge badge-success">v{cap.version}</span></div>
-                    {pill && <div className="kv"><div><dt>Owner</dt><dd>{actorLabel(pill.owner)}</dd></div><div><dt>Reviewed by</dt><dd>{pill.reviewers.map(actorLabel).join(", ")}</dd></div><div><dt>Written by</dt><dd>{actorLabel(pill.author)}</dd></div><div><dt>Change reason</dt><dd>{cleanText(pill.change_reason)}</dd></div></div>}
-                    {role !== "operator" && (
-                      <details className="tech-details"><summary>Technical details</summary>
-                        <div className="kv kv-tech"><div><dt>Pill ID</dt><dd>{cap.pill_id}</dd></div><div><dt>Content hash</dt><dd>{cap.content_hash}</dd></div></div>
-                      </details>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          {(selectedRec.result.actions.length > 0 || selectedRec.result.blocked_actions.length > 0) && (
+            <section className="lc-section">
+              <h2 className="lc-h2">What to do</h2>
+              <ul className="lc-todo">
+                {selectedRec.result.actions.map((a) => (
+                  <li key={a.id}><span className="lc-dot" aria-hidden="true" /><div><b>{actionLabel(a.id)}</b><span>{a.description}</span></div></li>
+                ))}
+                {selectedRec.result.blocked_actions.map((id) => (
+                  <li key={id} className="lc-todo-not"><span className="lc-dot" aria-hidden="true" /><div><b>Not yet: {actionLabel(id).charAt(0).toLowerCase() + actionLabel(id).slice(1)}</b><span>{id === "review_access_plan" ? "Wait until the other entrance is checked safe." : "Ruled out for these readings."}</span></div></li>
+                ))}
+              </ul>
+            </section>
+          )}
 
-          {(() => {
-            const all = [...new Set(selectedRec.capabilities.flatMap((cap) => cap.boundaries))];
-            const never = all.filter((b) => /^automatic/i.test(b));
-            return (
-              <details className="boundary-summary mb-16">
-                <summary><b>Advisory only</b> · {never.length} automatic actions never allowed · view limits</summary>
-                <ul className="boundary-list">{all.map((b) => <li key={b}><span className="boundary-icon">×</span><span>{b}</span></li>)}</ul>
-              </details>
-            );
-          })()}
-
-          <div className="card mb-16">
-            <div className="card-header"><span className="card-title">Your decision</span></div>
-            <div className="card-body">
-              {selectedRec.human_decision ? (
-                <>
-                  <div className="confirmation-banner"><span className="confirmation-text">Escalation recorded.</span>{onGoToEvolution && <span className="next-step-link" onClick={() => onGoToEvolution(selectedRec.id)}>Next: record the outcome →</span>}</div>
-                  <div className="kv"><div><dt>Decision</dt><dd>{humanise(selectedRec.human_decision.decision)}</dd></div><div><dt>Recorded by</dt><dd>{actorLabel(selectedRec.human_decision.actor)}</dd></div><div><dt>Note</dt><dd>{selectedRec.human_decision.note}</dd></div></div>
-                </>
-              ) : selectedRec.result.decision === "ESCALATE" ? (
-                <>
-                  {role !== "operator" && <div className="callout callout-warning mb-16">Only the operator on duty records the decision.</div>}
-                  <div className="chip-row mb-8">
-                    {["Escalated to the duty facilities engineer.", "Escalated to the tenant duty manager.", "Escalated to both for a coordinated response."].map((t) => (
-                      <button key={t} type="button" className="kb-chip" onClick={() => setNote(t)} disabled={busy || role !== "operator"}>{t.replace(/\.$/, "")}</button>
-                    ))}
-                  </div>
-                  <textarea className="note-input mb-8" rows={3} value={note} placeholder="Who did you escalate to, and why?" onChange={(e) => setNote(e.target.value)} disabled={busy || role !== "operator"} />
-                  <button className="btn btn-primary" onClick={handleEscalation} disabled={busy || role !== "operator" || !note.trim()}>{busy ? "Recording…" : "Record Escalation"}</button>
-                </>
-              ) : <div className="text-muted">No escalation decision is required for this recommendation.</div>}
-            </div>
-          </div>
+          <section className="lc-section lc-decide">
+            <h2 className="lc-h2">Your decision</h2>
+            {selectedRec.human_decision ? (
+              <>
+                <div className="confirmation-banner"><span className="confirmation-text">Escalation recorded.</span>{onGoToEvolution && <button type="button" className="link-btn next-step-link" onClick={() => onGoToEvolution(selectedRec.id)}>Record the outcome</button>}</div>
+                <div className="kv"><div><dt>Decision</dt><dd>{humanise(selectedRec.human_decision.decision)}</dd></div><div><dt>Recorded by</dt><dd>{actorLabel(selectedRec.human_decision.actor)}</dd></div><div><dt>Note</dt><dd>{selectedRec.human_decision.note}</dd></div></div>
+              </>
+            ) : selectedRec.result.decision === "ESCALATE" ? (
+              <>
+                {role !== "operator" && <p className="lc-muted mb-8">Only the operator on duty records the decision.</p>}
+                <div className="chip-row mb-8">
+                  {["Escalated to the duty facilities engineer.", "Escalated to the tenant duty manager.", "Escalated to both for a coordinated response."].map((t) => (
+                    <button key={t} type="button" className="kb-chip" onClick={() => setNote(t)} disabled={busy || role !== "operator"}>{t.replace(/^Escalated to /, "").replace(/\.$/, "").replace(/^./, (c) => c.toUpperCase())}</button>
+                  ))}
+                </div>
+                <textarea className="note-input mb-8" rows={3} value={note} placeholder="Who did you call, and why?" onChange={(e) => setNote(e.target.value)} disabled={busy || role !== "operator"} />
+                <button className="btn btn-primary" onClick={handleEscalation} disabled={busy || role !== "operator" || !note.trim()}>{busy ? "Recording…" : "Record escalation"}</button>
+              </>
+            ) : <p className="lc-muted">Nothing to record for this case.</p>}
+          </section>
 
           {selectedRec.ai_explanation && (
-            <div className="ai-summary">
+            <section className="ai-summary">
               <div className="ai-summary-head">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l1.8 5.4L19 9l-5.2 1.6L12 16l-1.8-5.4L5 9l5.2-1.6z" /><path d="M19 14l.9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9z" /></svg>
-                <span>Summary</span><span className="ai-tag">AI-generated</span>
+                <span>Handover summary</span><span className="ai-tag">AI-generated</span>
               </div>
               {summaryWriting === selectedRec.id ? (
                 <div className="ai-skeleton" aria-label="Writing summary">
@@ -451,9 +392,50 @@ export function LiveCase({
               ) : (
                 <button type="button" className="btn btn-quiet" onClick={() => writeSummary(selectedRec.id)}>Summarise this case</button>
               )}
-              <div className="ai-summary-foot">Advisory only · AI summaries can be wrong</div>
-            </div>
+              <div className="ai-summary-foot">AI summaries can be wrong. Check them against the readings.</div>
+            </section>
           )}
+
+          <details className="lc-how">
+            <summary>How Sifu got this</summary>
+            <div className="lc-how-body">
+              <h3 className="lc-h3">Rules that matched</h3>
+              {selectedRec.capabilities.map((cap) => (
+                <div key={cap.pill_id} className="mb-16">
+                  <div className="lc-pill-name">{exactPills[cap.pill_id]?.content.name ?? cap.pill_id} <span className="lc-ver">v{cap.version}</span></div>
+                  {cap.trace.length === 0 ? <div className="lc-muted">No rule matched.</div> : cap.trace.map((trace) => {
+                    const rule = exactPills[cap.pill_id]?.content.rules.find((r) => r.id === trace.rule_id);
+                    return (
+                      <div className={`rule-card ${trace.category}`} key={trace.rule_id}>
+                        <div className="rule-card-name">{rule ? `If ${conditionsText(rule.when).toLowerCase()}` : humanise(trace.rule_id)}</div>
+                        <div className="rule-card-rationale">{trace.rationale}</div>
+                        <div className="rule-card-evidence">{Object.entries(trace.observations).map(([k, o]) => `${readingLabel(k)}: ${readingValue(k, o.value, o.unit)}`).join("; ")}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+
+              <h3 className="lc-h3">Pill versions used</h3>
+              {selectedRec.capabilities.map((cap) => {
+                const pill = exactPills[cap.pill_id];
+                return (
+                  <div className="pill-provenance" key={cap.pill_id}>
+                    <div className="pill-prov-header"><div className="lc-pill-name">{pill?.content.name ?? "Pill"} <span className="lc-ver">v{cap.version}</span></div></div>
+                    {pill && <div className="kv"><div><dt>Owner</dt><dd>{actorLabel(pill.owner)}</dd></div><div><dt>Reviewed by</dt><dd>{pill.reviewers.map(actorLabel).join(", ")}</dd></div><div><dt>Written by</dt><dd>{actorLabel(pill.author)}</dd></div><div><dt>Why this version</dt><dd>{cleanText(pill.change_reason)}</dd></div></div>}
+                    {role !== "operator" && (
+                      <details className="tech-details"><summary>Technical details</summary>
+                        <div className="kv kv-tech"><div><dt>Pill ID</dt><dd>{cap.pill_id}</dd></div><div><dt>Content hash</dt><dd>{cap.content_hash}</dd></div></div>
+                      </details>
+                    )}
+                  </div>
+                );
+              })}
+
+              <h3 className="lc-h3">What Sifu will never do</h3>
+              <ul className="boundary-list">{[...new Set(selectedRec.capabilities.flatMap((cap) => cap.boundaries))].map((b) => <li key={b}><span className="boundary-icon" aria-hidden="true">×</span><span>{b}</span></li>)}</ul>
+            </div>
+          </details>
         </>
       )}
     </div>

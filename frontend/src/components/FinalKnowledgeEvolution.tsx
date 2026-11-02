@@ -3,6 +3,9 @@ import { friendlyError } from "../lib/friendlyError";
 import { WaitingFor, DemoHint, PlainChanges } from "./WorkflowBits";
 import { persona } from "../lib/glossary";
 import { actorLabel, sgTime, cleanText } from "../lib/format";
+import { ChecksHeldPanel, ClarificationPanel, GovChips, ReleasePath, releaseStepsFor } from "./GovernanceBits";
+import { checkName, failedChecks, GOVERNED_HOLD, openQuestions, validationPassed } from "../lib/governance";
+import { AiSteps, REVISE_STEPS, minStepsTime } from "./AiSteps";
 // The offline demo AI only recognises these exact labelled corrections; the label is added on submit, not shown.
 const DEMO_PREFIX = "SYNTHETIC CORRECTION: ";
 const withPrefix = (t: string) => (t.startsWith(DEMO_PREFIX) ? t : DEMO_PREFIX + t);
@@ -36,13 +39,6 @@ const OPS_ID = "asset.monsoon.triage";
 const BASE_CORRECTION = "SYNTHETIC CORRECTION: A flat water trend can hide drain backflow. Require a verified drain_backflow observation. If backflow is present, escalate to the duty facilities engineer and block routine monitoring as the sole response, even when water is not rising.";
 const REVISED_CORRECTION = "SYNTHETIC CORRECTION: A flat water trend can hide drain backflow. Require an explicit verified drain_backflow observation before applying the exception; do not infer backflow from a flat trend alone. If drain_backflow is missing or unverified, abstain and require qualified verification. If verified backflow is present, escalate to the duty facilities engineer and block routine monitoring as the sole response, even when water is not rising.";
 
-function statusClass(status: string): string {
-  if (status === "APPROVED") return "badge badge-success";
-  if (status === "IN_REVIEW") return "badge badge-warning";
-  if (status === "REJECTED" || status === "DEPRECATED") return "badge badge-danger";
-  return "badge badge-neutral";
-}
-
 export function KnowledgeEvolution({
   preselectedRecId,
   onGoToPill,
@@ -67,7 +63,7 @@ export function KnowledgeEvolution({
   const [error, setError] = useState<string | null>(null);
   const [outcomeText, setOutcomeText] = useState("Escalation was right. Engineer found the cause: the floor drain was backing up (backflow). Backflow will not always show as rising water. If the pump keeps pace, the level stays steady and looks safe.");
   const [correction, setCorrection] = useState(cleanText(BASE_CORRECTION));
-  const [reviewNote, setReviewNote] = useState("Make the verification requirement explicit and distinguish verified backflow from inference.");
+  const [reviewNote, setReviewNote] = useState("");
   const [revisionText, setRevisionText] = useState(cleanText(REVISED_CORRECTION));
 
   const loadData = useCallback(async () => {
@@ -130,6 +126,12 @@ export function KnowledgeEvolution({
     [versions]
   );
 
+  // Suggested reason only for the first round; after a return the note starts empty,
+  // so a second return is a deliberate choice (the offline demo AI has one revision).
+  useEffect(() => {
+    setReviewNote(latestRejected ? "" : "Make the verification requirement explicit and distinguish verified backflow from inference.");
+  }, [latestRejected?.version, candidate?.version]);
+
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
     setError(null);
@@ -138,7 +140,11 @@ export function KnowledgeEvolution({
       await loadData();
       onRefreshPills?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      // A governance hold (unresolved knowledge, failed source-grounded checks) is an
+      // intentional review state: reload so the state panels show it, no error box.
+      if (GOVERNED_HOLD.test(msg)) await loadData();
+      else setError(msg);
     } finally {
       setBusy(false);
     }
@@ -162,7 +168,7 @@ export function KnowledgeEvolution({
     const started = Date.now();
     try {
       await proposeCandidate(feedbackId);
-      const wait = 2800 - (Date.now() - started);
+      const wait = minStepsTime(REVISE_STEPS) - (Date.now() - started);
       if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     } finally {
       setDrafting(false);
@@ -186,6 +192,8 @@ export function KnowledgeEvolution({
     await transitionPill(OPS_ID, candidate.version, "reject", reviewNote.trim());
     rememberRejection(OPS_ID, candidate.version, reviewNote.trim(), getRole());
     setRevisionText(cleanText(REVISED_CORRECTION));
+    // The next round starts with an empty note, so a second return is a deliberate choice.
+    setReviewNote("");
   });
 
   const submitRevisionFeedback = () => recId && run(async () => {
@@ -205,6 +213,24 @@ export function KnowledgeEvolution({
     ? getRememberedRejection(candidate.pill_id, candidate.version)
     : latestRejected ? getRememberedRejection(latestRejected.pill_id, latestRejected.version) : null;
 
+  const questions = openQuestions(candidate);
+  const heldForClarification = !!candidate && ["DRAFT", "IN_REVIEW"].includes(candidate.status) && questions.length > 0;
+  const checksHeld = !!candidate && candidate.status === "IN_REVIEW" && failedChecks(candidate).length > 0;
+  const readyForRelease = !!candidate && candidate.status === "IN_REVIEW" && !!candidate.review && validationPassed(candidate) && !heldForClarification;
+
+  const returnForClarification = () => candidate && run(async () => {
+    const note = `Expert clarification required: ${questions.join(" ")}`.slice(0, 1900);
+    await transitionPill(OPS_ID, candidate.version, "reject", note);
+    rememberRejection(OPS_ID, candidate.version, note, getRole());
+  });
+
+  const returnForCorrection = () => candidate && run(async () => {
+    const names = failedChecks(candidate).map((r) => checkName(r.case_id)).join("; ");
+    const note = `Source-grounded checks did not pass: ${names}. Human correction required before approval.`;
+    await transitionPill(OPS_ID, candidate.version, "reject", note);
+    rememberRejection(OPS_ID, candidate.version, note, getRole());
+  });
+
   const operatorNeedsDecision = role === "operator" && rec && !rec.human_decision;
   const operatorNeedsOutcome = role === "operator" && rec && rec.human_decision && !rec.outcome;
   const operatorNeedsFeedback = role === "operator" && rec && rec.outcome && !feedbackId && !candidate;
@@ -222,9 +248,9 @@ export function KnowledgeEvolution({
       {error && <div className="error-box mb-16">{friendlyError(error)}</div>}
 
       <div className="source-attribution">
-        <span className="source-label">Production release:</span>
+        <span className="source-label">In use:</span>
         <span>{active ? `${active.content.name} v${active.version}` : "No approved release"}</span>
-        {candidate && <span className={statusClass(candidate.status)}>Candidate v{candidate.version} · {candidate.status}</span>}
+        {candidate && <><span className="source-label">Proposed:</span><GovChips pill={candidate} withVersion /></>}
       </div>
 
 
@@ -245,21 +271,21 @@ export function KnowledgeEvolution({
 
       {operatorNeedsOutcome && (
         <div className="card mb-16">
-          <div className="card-header"><span className="card-title">1. Record What Actually Happened</span><span className="card-meta">Operator</span></div>
+          <div className="card-header"><span className="card-title">1. What actually happened</span><span className="card-meta">Operator</span></div>
           <div className="card-body">
             <textarea className="note-input mb-8" rows={4} value={outcomeText} onChange={(e) => setOutcomeText(e.target.value)} disabled={busy} />
-            <button className="btn btn-primary" disabled={busy || !outcomeText.trim()} onClick={recordOperationalOutcome}>{busy ? "Recording…" : "Record Outcome"}</button>
+            <button className="btn btn-primary" disabled={busy || !outcomeText.trim()} onClick={recordOperationalOutcome}>{busy ? "Saving…" : "Save outcome"}</button>
           </div>
         </div>
       )}
 
       {operatorNeedsFeedback && (
         <div className="card mb-16">
-          <div className="card-header"><span className="card-title">2. Submit a Correction</span><span className="card-meta">Operator</span></div>
+          <div className="card-header"><span className="card-title">2. What the pill should learn</span><span className="card-meta">Operator</span></div>
           <div className="card-body">
             <textarea className="note-input mb-8" rows={5} value={correction} onChange={(e) => setCorrection(e.target.value)} disabled={busy} />
             <div className="text-muted mb-8">Proposed version: v{nextVersion}</div>
-            <button className="btn btn-primary" disabled={busy || !correction.trim()} onClick={submitInitialFeedback}>Submit Feedback</button>
+            <button className="btn btn-primary" disabled={busy || !correction.trim()} onClick={submitInitialFeedback}>Suggest a fix</button>
           </div>
         </div>
       )}
@@ -271,12 +297,9 @@ export function KnowledgeEvolution({
             <div className="text-dim mb-16">AI will draft v{nextVersion} from the feedback.</div>
             {latestRejected && <div className="text-dim mb-16">This feedback follows rejected v{latestRejected.version}; the new proposal will be v{nextVersion} and must pass the full governance cycle again.</div>}
             {drafting ? (
-              <div className="ai-skeleton" aria-label="Drafting proposal">
-                <div className="ai-writing">AI is drafting v{nextVersion} from the feedback…</div>
-                <span /><span /><span />
-              </div>
+              <AiSteps steps={REVISE_STEPS} label={`AI is drafting v${nextVersion}`} />
             ) : (
-              <button className="btn btn-primary" disabled={busy} onClick={generateProposal}>Generate AI Proposal</button>
+              <button className="btn btn-primary" disabled={busy} onClick={generateProposal}>Draft the fix with AI</button>
             )}
           </div>
         </div>
@@ -284,9 +307,12 @@ export function KnowledgeEvolution({
 
       {candidate?.status === "DRAFT" && (
         <div className="card mb-16">
-          <div className="card-header"><span className="card-title">4. Check the proposed changes</span><span className="card-meta">v{candidate.previous_version} → v{candidate.version}</span></div>
+          <div className="card-header"><span className="card-title">4. Check the proposed changes</span><GovChips pill={candidate} /></div>
           <div className="card-body">
-            <div className="callout callout-warning mb-16">v{candidate.previous_version} stays in use until this is approved.</div>
+            <ReleasePath steps={releaseStepsFor(candidate)} />
+            {heldForClarification
+              ? <ClarificationPanel pill={candidate} activeVersion={active?.version} />
+              : <div className="callout callout-warning mb-16">v{candidate.previous_version} stays in use until this is approved.</div>}
             <div className="section-heading">Why it changed</div><div className="text-dim mb-16">{candidate.change_reason.replace(/^SYNTHETIC CORRECTION:\s*/, "")}</div>
             <div className="section-heading">What changes <span className="ai-tag">AI-drafted</span></div>
             {active ? <PlainChanges before={active.content} after={candidate.content} /> : <div className="text-muted">Current version unavailable.</div>}
@@ -298,34 +324,64 @@ export function KnowledgeEvolution({
                 ))}
               </details>
             ) : null}
-            {role === "expert" ? <button className="btn btn-primary" disabled={busy} onClick={submitForReview}>Submit for Independent Review</button> : <WaitingFor role="expert" task="check and submit this proposal" />}
-            {onGoToPill && <div className="mt-8"><span className="pill-link" onClick={() => onGoToPill(OPS_ID)}>Inspect full Pill →</span></div>}
+            {role === "expert" ? <button className="btn btn-primary" disabled={busy} onClick={submitForReview}>Send for review</button> : <WaitingFor role="expert" task="check and submit this proposal" />}
+            {onGoToPill && <div className="mt-8"><span className="pill-link" onClick={() => onGoToPill(OPS_ID)}>Open the full draft</span></div>}
           </div>
         </div>
       )}
 
       {candidate?.status === "IN_REVIEW" && (
         <div className="card mb-16">
-          <div className="card-header"><span className="card-title">5. Independent review & test situations</span><span className="card-meta">Reviewer</span></div>
+          <div className="card-header"><span className="card-title">5. Review and test</span><GovChips pill={candidate} /></div>
           <div className="card-body">
-            <div className="kv mb-16"><div><dt>Review</dt><dd>{candidate.review ? "Recorded" : "Pending"}</dd></div><div><dt>Validation</dt><dd>{candidate.validation ? (candidate.validation.passed === true ? "Passed" : "Failed") : "Pending"}</dd></div></div>
+            <ReleasePath steps={releaseStepsFor(candidate)} />
+            <div className="kv mb-16">
+              <div><dt>Review</dt><dd>{candidate.review ? "Recorded" : heldForClarification ? "On hold" : "Pending"}</dd></div>
+              <div><dt>Validation</dt><dd>{!candidate.validation ? "Pending" : checksHeld ? "Checks not passed" : validationPassed(candidate) ? "Passed" : "Not passed"}</dd></div>
+            </div>
+            {heldForClarification && <ClarificationPanel pill={candidate} activeVersion={active?.version} />}
+            {checksHeld && <ChecksHeldPanel pill={candidate} activeVersion={active?.version} />}
             {role === "reviewer" ? (
-              <>
-                {candidate.review && candidate.validation && (
-                  <div className="text-dim mb-8">
-                    Review and test situations are done — this now goes to {persona("approver").name} (Approver) for the release decision. You can still reject it before release.
-                  </div>
-                )}
-                <div className="section-heading">Reviewer note / rejection reason</div>
-                <textarea className="note-input mb-8" rows={3} value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} disabled={busy} />
-                <div className="flex gap-8 flex-wrap">
-                  {!candidate.review && <button className="btn btn-primary" disabled={busy} onClick={recordReview}>Record Independent Review</button>}
-                  {candidate.review && !candidate.validation && <button className="btn btn-primary" disabled={busy} onClick={validate}>Run Validation</button>}
-                  {candidate.review && <button className="btn btn-danger" disabled={busy || !reviewNote.trim()} onClick={reject}>Reject with Reason</button>}
+              heldForClarification ? (
+                <div className="flex gap-8 flex-wrap" style={{ alignItems: "center" }}>
+                  <button className="btn btn-primary" disabled={busy} onClick={returnForClarification}>Return to expert for clarification</button>
+                  <span className="gov-btn-note">Review unlocks once the questions are answered.</span>
                 </div>
-              </>
-            ) : candidate.review && candidate.validation ? (
-              <WaitingFor role="approver" task="make the release decision" />
+              ) : checksHeld ? (
+                <div className="flex gap-8 flex-wrap" style={{ alignItems: "center" }}>
+                  <button className="btn btn-primary" disabled={busy} onClick={returnForCorrection}>Return for correction</button>
+                  <span className="gov-btn-note">Approval unlocks after correction and revalidation.</span>
+                </div>
+              ) : (
+                readyForRelease ? (
+                  <>
+                    <div className="callout callout-success mb-8">
+                      <strong>Reviewed, and all test situations passed.</strong> Next: {persona("approver").name} (Approver) releases it.
+                    </div>
+                    <details className="return-instead">
+                      <summary>Return it instead</summary>
+                      <textarea className="note-input mb-8 mt-8" rows={3} value={reviewNote} placeholder="Why are you returning it?" onChange={(e) => setReviewNote(e.target.value)} disabled={busy} />
+                      <button className="btn btn-danger" disabled={busy || !reviewNote.trim()} onClick={reject}>Return with reason</button>
+                    </details>
+                  </>
+                ) : (
+                  <>
+                    <div className="section-heading">Note (required if you return it)</div>
+                    <textarea className="note-input mb-8" rows={3} value={reviewNote} placeholder="Why are you returning it?" onChange={(e) => setReviewNote(e.target.value)} disabled={busy} />
+                    <div className="flex gap-8 flex-wrap">
+                      {!candidate.review && <button className="btn btn-primary" disabled={busy} onClick={recordReview}>Mark as reviewed</button>}
+                      {candidate.review && !candidate.validation && <button className="btn btn-primary" disabled={busy} onClick={validate}>Run the test situations</button>}
+                      {candidate.review && <button className="btn btn-danger" disabled={busy || !reviewNote.trim()} onClick={reject}>Return with reason</button>}
+                    </div>
+                  </>
+                )
+              )
+            ) : heldForClarification ? (
+              <WaitingFor role="expert" task="answer the open questions" />
+            ) : checksHeld ? (
+              <WaitingFor role="reviewer" task="return the draft for human correction" />
+            ) : readyForRelease ? (
+              role === "approver" ? null : <WaitingFor role="approver" task="make the release decision" />
             ) : <WaitingFor role="reviewer" task="review it and run the test situations" />}
           </div>
         </div>
@@ -333,9 +389,9 @@ export function KnowledgeEvolution({
 
       {candidate?.status === "REJECTED" && (
         <div className="card mb-16">
-          <div className="card-header"><span className="card-title">Rejected — revise and resubmit</span><span className="card-meta">v{candidate.version}</span></div>
+          <div className="card-header"><span className="card-title">Returned — revise and resubmit</span><span className="card-meta">v{candidate.version}</span></div>
           <div className="card-body">
-            <div className="callout callout-danger mb-16"><strong>v{candidate.version} was not released.</strong> v{candidate.previous_version} remains active.</div>
+            <div className="gov-panel gov-panel-hold"><strong>v{candidate.version} was not released.</strong> Approved v{candidate.previous_version} remains active.</div>
             <div className="section-heading">Reviewer&apos;s reason</div>
             <div className="rejected-reason mb-16">{rejectedReason ? `“${rejectedReason.note}” — ${actorLabel(rejectedReason.actor)}` : "The rejection is recorded in the audit trail."}</div>
             {role === "expert" ? (
@@ -343,7 +399,7 @@ export function KnowledgeEvolution({
                 <div className="section-heading">Revised correction</div>
                 <div className="text-dim mb-8">Edit the correction to address the reviewer&apos;s reason.</div>
                 <textarea className="note-input mb-8" rows={7} value={revisionText} onChange={(e) => setRevisionText(e.target.value)} disabled={busy} />
-                <button className="btn btn-primary" disabled={busy || !revisionText.trim() || revisionText.trim() === cleanText(candidate.change_reason)} onClick={submitRevisionFeedback}>Submit Revised Feedback for v{nextVersion}</button>
+                <button className="btn btn-primary" disabled={busy || !revisionText.trim() || revisionText.trim() === cleanText(candidate.change_reason)} onClick={submitRevisionFeedback}>Send the revised fix (v{nextVersion})</button>
               </>
             ) : <WaitingFor role="expert" task="revise and resubmit" />}
           </div>
@@ -352,23 +408,25 @@ export function KnowledgeEvolution({
 
       {candidate?.status === "IN_REVIEW" && candidate.review && candidate.validation && role === "approver" && (
         <div className="card mb-16">
-          <div className="card-header"><span className="card-title">6. Release Decision</span><span className="card-meta">Approver</span></div>
+          <div className="card-header"><span className="card-title">6. Release</span><span className="card-meta">Approver</span></div>
           <div className="card-body">
-            <div className="callout callout-warning mb-16">Approving v{candidate.version} supersedes v{candidate.previous_version}.</div>
-            <button className="btn btn-primary" disabled={busy || candidate.validation.passed !== true} onClick={approve}>{busy ? "Approving…" : `Approve v${candidate.version}`}</button>
+            {readyForRelease
+              ? <div className="callout callout-warning mb-16">Approving v{candidate.version} supersedes v{candidate.previous_version}.</div>
+              : <div className="gov-panel gov-panel-hold">Approval is locked until this draft is corrected and revalidated. Approved v{candidate.previous_version} remains active.</div>}
+            <button className="btn btn-primary" disabled={busy || !readyForRelease} onClick={approve}>{busy ? "Approving…" : `Approve v${candidate.version}`}</button>
           </div>
         </div>
       )}
 
       {candidate?.status === "APPROVED" && (
         <div className="card mb-16">
-          <div className="card-header"><span className="card-title">Governance Cycle Complete</span></div>
+          <div className="card-header"><span className="card-title">v{candidate.version} is now in use</span></div>
           <div className="card-body">
             <div className="callout callout-success mb-16"><strong>v{candidate.version} is approved and active.</strong> v{candidate.previous_version} remains readable as superseded history.</div>
             <div className="text-dim mb-16">The next Operator assessment can now use the learned <strong>flat water + verified backflow</strong> scenario.</div>
             <div className="flex gap-8 flex-wrap">
               {onGoToLiveCase && <button className="btn btn-primary" onClick={onGoToLiveCase}>Open Live Case</button>}
-              {onGoToPill && <button className="btn" onClick={() => onGoToPill(OPS_ID)}>Inspect Version Lineage</button>}
+              {onGoToPill && <button className="btn" onClick={() => onGoToPill(OPS_ID)}>See version history</button>}
             </div>
             {role !== "operator" && <div className="mt-16"><DemoHint>New assessments are run by the operator — switch to Operator at top right.</DemoHint></div>}
           </div>

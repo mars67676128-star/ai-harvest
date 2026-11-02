@@ -38,6 +38,7 @@ export default function App() {
   const [pills, setPills] = useState<PillVersion[]>([]);
   const [recommendations, setRecommendations] = useState<RecommendationRecord[]>([]);
   const [evolutionRecId, setEvolutionRecId] = useState<string | null>(null);
+  const [liveRecId, setLiveRecId] = useState<string | null>(null);
   const [pillsSelectedId, setPillsSelectedId] = useState<string | null>(null);
   const [exactPillVersion, setExactPillVersion] = useState<string | null>(null);
   const [showBanner, setShowBanner] = useState<boolean>(() => { try { return localStorage.getItem("sifu-banner-dismissed") !== "1"; } catch { return true; } });
@@ -105,10 +106,10 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-topbar">
-        <div className="topbar-brand">Sifu<span className="brand-sub">AI HARVEST</span></div>
+        <div className="topbar-brand">Sifu<span className="brand-sub">AI Harvest</span></div>
         <div className="topbar-spacer" />
         <div className="topbar-right">
-          {health && <span className="topbar-env"><span className="topbar-env-dot" />{health.environment === "demo" ? "Demo" : health.environment} · {health.provider === "mock" ? "offline AI" : health.provider}</span>}
+          {health && <span className="topbar-env"><span className="topbar-env-dot" />{health.environment === "demo" ? "Demo" : health.environment} with {health.provider === "mock" ? "offline AI" : `live AI (${health.provider})`}</span>}
           <select className="role-select" value={role} onChange={(e) => handleRoleChange(e.target.value)}>
             <option value="viewer">Viewer · Guest</option>
             <option value="operator">Operator · {PERSONAS.operator.name}</option>
@@ -157,14 +158,15 @@ export default function App() {
             <Home
               key={`home-${role}`}
               onGoToHowItWorks={(section?: string) => { setView("how"); if (section) setTimeout(() => document.getElementById(section)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}
-              onGoToLiveCase={() => setView("operational")}
+              onGoToLiveCase={(recId?: string) => { setLiveRecId(recId ?? null); setView("operational"); }}
               onGoToEvolution={(recId?: string) => { setEvolutionRecId(recId ?? null); setView("evolution"); }}
               onGoToPill={openRegistryPill}
             />
           )}
           {view === "operational" && (
             <LiveCase
-              key={`live-${role}`}
+              key={`live-${role}-${liveRecId ?? "none"}`}
+              openRecId={liveRecId}
               onGoToEvolution={(recId: string) => { setEvolutionRecId(recId); setView("evolution"); }}
               onGoToPill={openRegistryPill}
             />

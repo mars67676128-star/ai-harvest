@@ -4,13 +4,8 @@ import type { PillVersion } from "../types";
 import { getPillVersion, getRole } from "../api";
 import { DomainIcon } from "./DomainIcon";
 import { downloadPillJson, printPillSheet } from "../lib/pillExport";
-
-function badge(status: string): string {
-  if (status === "APPROVED") return "badge badge-success";
-  if (status === "IN_REVIEW") return "badge badge-info";
-  if (status === "REJECTED" || status === "DEPRECATED") return "badge badge-danger";
-  return "badge badge-neutral";
-}
+import { ChecksHeldPanel, ClarificationPanel, CorrectionNote, GovChips, ReleasePath, releaseStepsFor } from "./GovernanceBits";
+import { expectedText, failedChecks, openQuestions, testTitle } from "../lib/governance";
 
 export function ExactPillView({
   pillId,
@@ -23,7 +18,6 @@ export function ExactPillView({
 }) {
   const [pill, setPill] = useState<PillVersion | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const role = getRole();
 
   useEffect(() => {
     let cancelled = false;
@@ -44,7 +38,7 @@ export function ExactPillView({
       <div className="source-attribution mb-16">
         <span className="source-label">Version:</span>
         <span>{pill.content.name}</span>
-        <span className={badge(pill.status)}>v{pill.version} · {pill.status}</span>
+        <GovChips pill={pill} withVersion />
       </div>
 
       <div className="card mb-16">
@@ -59,7 +53,7 @@ export function ExactPillView({
             </div>
             <div className="flex gap-8 flex-wrap">
               <span className="badge badge-accent">{pill.content.domain}</span>
-              <span className={badge(pill.status)}>v{pill.version} · {pill.status}</span>
+              <GovChips pill={pill} withVersion />
             </div>
           </div>
           <div className="pill-export-row">
@@ -70,14 +64,20 @@ export function ExactPillView({
         </div>
       </div>
 
-      {pill.status !== "APPROVED" && (
+      <ReleasePath steps={releaseStepsFor(pill)} />
+      {openQuestions(pill).length > 0 && (pill.status === "DRAFT" || pill.status === "IN_REVIEW") ? (
+        <ClarificationPanel pill={pill} />
+      ) : failedChecks(pill).length > 0 && pill.status !== "APPROVED" ? (
+        <ChecksHeldPanel pill={pill} />
+      ) : pill.status !== "APPROVED" && pill.status !== "SUPERSEDED" ? (
         <div className="callout callout-warning mb-16">
-          <strong>Draft v{pill.version}, not in use.</strong> The approved version stays in use until this is approved.
+          <strong>v{pill.version}, not in use.</strong> The approved version stays in use until this is approved.
         </div>
-      )}
+      ) : null}
+      <CorrectionNote pill={pill} />
 
       <div className="card mb-16">
-        <div className="card-header"><span className="card-title">Governance Metadata</span><span className="card-meta">viewer: {role}</span></div>
+        <div className="card-header"><span className="card-title">Sign-off details</span></div>
         <div className="card-body">
           <div className="kv">
             <div><dt>Version</dt><dd>v{pill.version}</dd></div>
@@ -120,17 +120,17 @@ export function ExactPillView({
       </div>
 
       <div className="card mb-16">
-        <div className="card-header"><span className="card-title">Regression Obligations</span><span className="card-meta">{pill.content.evaluation.length} cases</span></div>
+        <div className="card-header"><span className="card-title">Test situations it must pass</span><span className="card-meta">{pill.content.evaluation.length}</span></div>
         <div className="card-body">
           {pill.content.evaluation.map((raw, index) => {
             const test = raw as Record<string, unknown>;
-            return <div className="regression-row" key={String(test.id ?? index)}><div className="regression-row-title">{String(test.id ?? `case-${index}`)}</div><div className="text-muted">Expected decision: {String(test.expected_decision ?? "—")}</div></div>;
+            return <div className="regression-row" key={String(test.id ?? index)}><div className="regression-row-title">{testTitle(String(test.id ?? `case-${index}`), test.description as string | undefined)}</div><div className="text-muted">Should give: {expectedText(test.expected_decision as string | undefined, (test.expected_actions as string[] | undefined) ?? [])}</div></div>;
           })}
         </div>
       </div>
 
       <div className="card">
-        <div className="card-header"><span className="card-title">Evidence & Provenance</span></div>
+        <div className="card-header"><span className="card-title">Where this knowledge came from</span></div>
         <div className="card-body">
           {pill.content.evidence.map((evidence) => (
             <div className="pill-provenance mb-16" key={evidence.id}>

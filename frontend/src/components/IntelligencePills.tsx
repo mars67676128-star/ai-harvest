@@ -1,49 +1,23 @@
 import { useState, useEffect, useCallback, Fragment } from "react";
-import type { PillVersion, Status } from "../types";
+import type { PillVersion } from "../types";
 import { downloadPillJson, printPillSheet } from "../lib/pillExport";
 import { DomainIcon } from "./DomainIcon";
 import { Term, Avatar } from "./Term";
 import { persona } from "../lib/glossary";
 import { actorLabel, sgTime, readingLabel, conditionsText, cleanText, isDemoDisclaimer } from "../lib/format";
+import { ChecksHeldPanel, ClarificationPanel, CorrectionNote, GovChips, PillSignals, ReleasePath, StageChip, releaseStepsFor } from "./GovernanceBits";
+import { usageFromAudit, usageFromRecs, type Usage } from "../lib/pillSignals";
+import { acceptanceOf, checkName, correctionSource, failedChecks, openQuestions, stageOf } from "../lib/governance";
 import {
   getPills,
   getPillVersions,
   getAuditHistory,
   getRole,
+  getRecommendations,
   type AuditEntry,
 } from "../api";
 
 const PRIMARY_PILL_ID = "asset.monsoon.triage";
-
-const STATUS_LABELS: Record<Status, string> = {
-  DRAFT: "Draft",
-  IN_REVIEW: "In Review",
-  APPROVED: "Approved",
-  REJECTED: "Rejected",
-  SUPERSEDED: "Superseded",
-  DEPRECATED: "Deprecated",
-};
-
-function statusBadgeClass(status: Status): string {
-  switch (status) {
-    case "APPROVED": return "badge badge-success";
-    case "IN_REVIEW": return "badge badge-info";
-    case "DRAFT": return "badge badge-neutral";
-    case "REJECTED": return "badge badge-danger";
-    case "SUPERSEDED": return "badge badge-neutral";
-    case "DEPRECATED": return "badge badge-danger";
-    default: return "badge badge-neutral";
-  }
-}
-
-const LIFECYCLE_STEPS: Status[] = ["DRAFT", "IN_REVIEW", "APPROVED"];
-
-function lifecycleIndex(status: Status): number {
-  if (status === "APPROVED") return 2;
-  if (status === "IN_REVIEW") return 1;
-  if (status === "DRAFT") return 0;
-  return -1;
-}
 
 function fmtDate(iso: string | null): string {
   return sgTime(iso);
@@ -55,8 +29,8 @@ function fmtHash(hash: string): string {
 }
 
 const AUDIT_EVENT_LABELS: Record<string, string> = {
-  PILL_CREATED: "Pill Created",
-  REVIEW_REQUESTED: "Submitted for Review",
+  PILL_CREATED: "Pill created",
+  REVIEW_REQUESTED: "Sent for review",
   EXPERT_REVIEWED: "Reviewed",
   PILL_VALIDATED: "Validated",
   PILL_APPROVED: "Approved",
@@ -64,15 +38,16 @@ const AUDIT_EVENT_LABELS: Record<string, string> = {
   PILL_DEPRECATED: "Deprecated",
   PILL_SUPERSEDED: "Superseded",
   PILL_INVOKED: "Invoked",
-  CANDIDATE_REVISION_CREATED: "Candidate Revision Created",
-  AI_REVISION_PROPOSED: "AI Revision Proposed",
-  KNOWLEDGE_CAPTURED: "Knowledge Captured",
-  KNOWLEDGE_EXTRACTED: "Knowledge Extracted",
-  CASE_CREATED: "Case Created",
-  RECOMMENDATION_GENERATED: "Recommendation Generated",
-  HUMAN_DECISION: "Human Decision Recorded",
-  OUTCOME_RECORDED: "Outcome Recorded",
-  FEEDBACK_SUBMITTED: "Feedback Submitted",
+  CANDIDATE_REVISION_CREATED: "Revision proposed",
+  AI_REVISION_PROPOSED: "AI drafted a revision",
+  KNOWLEDGE_CAPTURED: "Interview recorded",
+  KNOWLEDGE_EXTRACTED: "AI drafted rules",
+  CASE_CREATED: "Case opened",
+  RECOMMENDATION_GENERATED: "Advice given",
+  HUMAN_DECISION: "Decision recorded",
+  OUTCOME_RECORDED: "Outcome recorded",
+  FEEDBACK_SUBMITTED: "Fix suggested",
+  SCRIPTED_REVIEWER_CORRECTION: "Human correction recorded",
 };
 
 function auditEventLabel(event: string): string {
@@ -150,6 +125,11 @@ export function IntelligencePills({
   const [error, setError] = useState<string | null>(null);
 
   const role = getRole();
+  const [recUsage, setRecUsage] = useState<Record<string, Usage> | null>(null);
+  useEffect(() => {
+    if (role !== "operator" && role !== "approver") { setRecUsage(null); return; }
+    getRecommendations().then((r) => setRecUsage(usageFromRecs(r))).catch(() => setRecUsage(null));
+  }, [role]);
   const governanceExpanded = role === "expert" || role === "reviewer" || role === "approver";
 
   // Sync external pill selection (e.g. when navigating from Live Case)
@@ -299,7 +279,7 @@ export function IntelligencePills({
       />
 
       {/* Pill header — name, domain, version, status appear ONCE here */}
-      <PillHeader pill={selectedPill} />
+      <PillHeader pill={selectedPill} usage={recUsage ? recUsage[selectedPill.pill_id] ?? { count: 0, last: null } : role === "reviewer" ? usageFromAudit(auditEntries)?.[selectedPill.pill_id] ?? { count: 0, last: null } : undefined} />
 
       {/* Key heuristic quote at the top of the pill */}
       <KeyHeuristicQuote pill={selectedPill} />
@@ -343,14 +323,14 @@ function PillRegistry({
   return (
     <div className="card" style={{ marginBottom: 24 }}>
       <div className="card-header">
-        <span className="card-title">Pill Registry</span>
+        <span className="card-title">All pills</span>
         <span className="card-meta">{pills.length} pills</span>
       </div>
       <div className="card-body" style={{ padding: 0 }}>
         <table className="pill-table">
           <thead>
             <tr>
-              <th>Pill Name</th>
+              <th>Name</th>
               <th>Domain</th>
               <th>Version</th>
               <th>Status</th>
@@ -377,7 +357,7 @@ function PillRegistry({
                     </td>
                     <td>{p.content.domain}</td>
                     <td><span className="code-inline">v{p.version}</span></td>
-                    <td><span className={statusBadgeClass(p.status)}>{STATUS_LABELS[p.status]}</span></td>
+                    <td><StageChip k={stageOf(p).key} label={stageOf(p).label} /></td>
                     <td>{persona(p.owner).name}</td>
                   </tr>
                   {draft && (
@@ -386,11 +366,11 @@ function PillRegistry({
                       onClick={() => onSelect(p.pill_id)}
                     >
                       <td style={{ paddingLeft: 24 }}>
-                        <div className="text-muted text-sm">↳ candidate revision</div>
+                        <div className="text-muted text-sm">↳ {draft.version.previous_version ? "candidate revision" : "unreleased draft"}</div>
                       </td>
                       <td />
                       <td><span className="code-inline">v{draft.version.version}</span></td>
-                      <td><span className={statusBadgeClass(draft.version.status)}>{STATUS_LABELS[draft.version.status]}</span></td>
+                      <td><StageChip k={stageOf(draft.version).key} label={stageOf(draft.version).label} /></td>
                       <td>{persona(draft.version.author).name}</td>
                     </tr>
                   )}
@@ -406,7 +386,7 @@ function PillRegistry({
 
 // --- Selected Pill Header — name, domain, version, status appear ONCE ---
 
-function PillHeader({ pill }: { pill: PillVersion }) {
+function PillHeader({ pill, usage }: { pill: PillVersion; usage?: Usage | null }) {
   return (
     <div className="card" style={{ marginBottom: 24 }}>
       <div className="card-body">
@@ -421,12 +401,13 @@ function PillHeader({ pill }: { pill: PillVersion }) {
                 {pill.content.description}
               </div>
               <PillByline pill={pill} />
+              <PillSignals pill={pill} usage={usage} />
             </div>
           </div>
           <div className="flex gap-8 flex-wrap" style={{ alignItems: "center" }}>
             <span className="badge badge-accent">{pill.content.domain}</span>
             <span className="badge badge-neutral">v{pill.version}</span>
-            <span className={statusBadgeClass(pill.status)}>{STATUS_LABELS[pill.status]}</span>
+            <GovChips pill={pill} />
           </div>
         </div>
         <div className="pill-export-row">
@@ -530,41 +511,32 @@ function GovernanceLifecycle({
   auditError: string | null;
   defaultOpen: boolean;
 }) {
-  const currentStep = lifecycleIndex(pill.status);
   const role = getRole();
   const canSeeAudit = role === "reviewer" || role === "approver";
 
   const lifecycleAudit = auditEntries.filter((a) =>
-    ["PILL_CREATED", "REVIEW_REQUESTED", "EXPERT_REVIEWED", "PILL_VALIDATED", "PILL_APPROVED", "PILL_REJECTED", "PILL_DEPRECATED", "PILL_SUPERSEDED", "CANDIDATE_REVISION_CREATED", "AI_REVISION_PROPOSED"]
+    ["PILL_CREATED", "REVIEW_REQUESTED", "EXPERT_REVIEWED", "PILL_VALIDATED", "PILL_APPROVED", "PILL_REJECTED", "PILL_DEPRECATED", "PILL_SUPERSEDED", "CANDIDATE_REVISION_CREATED", "AI_REVISION_PROPOSED", "SCRIPTED_REVIEWER_CORRECTION"]
       .includes(a.event)
   );
 
   return (
-    <Collapsible title="Sign-off history" hint="Who reviewed, tested and approved this version — and when." meta={`Draft → In Review → Approved`} defaultOpen={defaultOpen}>
-      {/* Lifecycle stepper */}
-      <div className="lifecycle-stepper">
-        {LIFECYCLE_STEPS.map((step, i) => {
-          const isDone = currentStep >= 0 && i <= currentStep;
-          const isCurrent = currentStep === i;
-          return (
-            <div key={step} className={`lifecycle-step ${isDone ? "done" : ""} ${isCurrent ? "current" : ""}`}>
-              <div className="lifecycle-dot" />
-              <div className="lifecycle-label">{STATUS_LABELS[step]}</div>
-            </div>
-          );
-        })}
-      </div>
+    <Collapsible title="Sign-off history" hint="Who reviewed, tested and approved this version — and when." meta={stageOf(pill).label} defaultOpen={defaultOpen}>
+      {/* Release path: how this version got here */}
+      <ReleasePath steps={releaseStepsFor(pill)} />
+      <CorrectionNote pill={pill} />
 
       {/* Governance gates */}
       <div className="mt-16">
-        <div className="section-heading">Governance Gates</div>
+        <div className="section-heading">Sign-offs</div>
         <div className="grid-3">
           <GovernanceGate title="Review" record={pill.review} summaryFields={["actor", "at", "content_hash", "note"]} />
           <GovernanceGate title="Validation" record={pill.validation} summaryFields={["actor", "at", "content_hash", "passed"]} extraSummary={(rec) => {
             const results = rec.results as Array<Record<string, unknown>> | undefined;
-            if (!results) return null;
-            const passed = results.filter((r) => r.passed === true).length;
-            return `Regression: ${passed}/${results.length} cases passed`;
+            const parts: string[] = [];
+            if (results) parts.push(`Test situations: ${results.filter((r) => r.passed === true).length}/${results.length} passed`);
+            const acc = acceptanceOf(pill);
+            if (acc && acc.results.length) parts.push(`Source-grounded checks: ${acc.results.filter((r) => r.passed).length}/${acc.results.length} passed`);
+            return parts.length ? parts.join(" · ") : null;
           }} />
           <GovernanceGate title="Approval" record={pill.approval} summaryFields={["actor", "at", "content_hash", "note"]} />
         </div>
@@ -574,7 +546,7 @@ function GovernanceLifecycle({
       {canSeeAudit ? (
         lifecycleAudit.length > 0 ? (
           <div className="mt-16">
-            <div className="section-heading">Governance Audit Trail</div>
+            <div className="section-heading">Audit trail</div>
             <ul className="timeline">
               {lifecycleAudit.map((entry, i) => (
                 <li key={i} className={`timeline-item ${auditEventToLifecycleStep(entry.event) >= 0 ? "active" : ""}`}>
@@ -642,7 +614,8 @@ function GovernanceGate({
     );
   }
 
-  const passed = record.passed;
+  const acc = record.acceptance as { passed?: boolean } | undefined;
+  const passed = record.passed === true && acc?.passed === false ? false : record.passed;
   const isValidation = title === "Validation";
 
   return (
@@ -653,7 +626,7 @@ function GovernanceGate({
           passed === true ? (
             <span className="badge badge-success">Passed</span>
           ) : passed === false ? (
-            <span className="badge badge-danger">Failed</span>
+            <span className="badge badge-warning">Checks not passed</span>
           ) : (
             <span className="badge badge-neutral">Recorded</span>
           )
@@ -913,8 +886,8 @@ function EvidenceProvenance({ pill, defaultOpen }: { pill: PillVersion; defaultO
 
 const DECISION_LABELS: Record<string, string> = {
   ESCALATE: "Escalate",
-  HUMAN_REVIEW: "Needs review",
-  ABSTAIN: "Abstain — not enough data",
+  HUMAN_REVIEW: "Person reviews",
+  ABSTAIN: "No advice (not enough data)",
 };
 
 function decisionBadgeClass(decision: string): string {
@@ -984,7 +957,7 @@ function ValidationObligations({ pill, defaultOpen }: { pill: PillVersion; defau
               <span className="regression-row-title">{title}</span>
               <span className="regression-row-arrow">→</span>
               <span className={decisionBadgeClass(expectedDecision)}>
-                {expectedDecision === "HUMAN_REVIEW" && expectedActions.includes("monitor_trend") ? "Keep monitoring (person confirms)" : (DECISION_LABELS[expectedDecision] ?? expectedDecision)}
+                {expectedDecision === "HUMAN_REVIEW" && expectedActions.includes("monitor_trend") ? "Keep monitoring, a person confirms" : (DECISION_LABELS[expectedDecision] ?? expectedDecision)}
               </span>
               {isNew ? (
                 <span className="regression-row-badge-new">New in v{pill.version}</span>
@@ -1017,6 +990,10 @@ function ValidationObligations({ pill, defaultOpen }: { pill: PillVersion; defau
 
 // --- Version Lineage ---
 
+function approvedOf(versions: PillVersion[]): string | null {
+  return versions.find((x) => x.status === "APPROVED")?.version ?? null;
+}
+
 function VersionLineage({
   versions,
   currentVersion,
@@ -1034,24 +1011,40 @@ function VersionLineage({
         </div>
       ) : (
         <ul className="timeline">
-          {versions.map((v) => (
+          {versions.map((v) => {
+            const fixedBy = versions.find((x) => correctionSource(x)?.aiDraft === v.version);
+            return (
             <li key={`${v.pill_id}:${v.version}`} className={`timeline-item ${v.version === currentVersion ? "active" : ""}`}>
               <div className="flex-between">
                 <div className="flex gap-8" style={{ alignItems: "center" }}>
                   <span className="code-inline">v{v.version}</span>
-                  <span className={statusBadgeClass(v.status)}>{STATUS_LABELS[v.status]}</span>
+                  {fixedBy
+                    ? <span className="gov-chips"><StageChip k="ai_draft" label="AI-drafted" /><StageChip k="corrected_draft" label={`Corrected in v${fixedBy.version}`} /></span>
+                    : <GovChips pill={v} />}
                   {v.version === currentVersion && <span className="badge badge-accent">Current</span>}
                 </div>
                 <span className="timeline-time">{fmtDate(v.created_at)}</span>
               </div>
-              {v.change_reason && (
+              {v.change_reason && !/HUMAN CORRECTION/i.test(v.change_reason) && (
                 <div className="text-sm text-muted mt-8">{cleanText(v.change_reason)}</div>
               )}
+              {fixedBy && failedChecks(v).length > 0 && (
+                <div className="text-sm text-muted mt-8">Did not pass source-grounded checks: {failedChecks(v).map((r) => checkName(r.case_id)).join(" · ")}. Not released.</div>
+              )}
+              {!fixedBy && (v.status === "DRAFT" || v.status === "IN_REVIEW") && (
+                <div className="mt-8">
+                  {openQuestions(v).length > 0
+                    ? <ClarificationPanel pill={v} activeVersion={approvedOf(versions)} />
+                    : <ChecksHeldPanel pill={v} activeVersion={approvedOf(versions)} />}
+                </div>
+              )}
+              <div className="mt-8"><CorrectionNote pill={v} /></div>
               <div className="text-sm text-muted mt-8">
                 Written by {actorLabel(v.author)}{v.previous_version ? ` · replaces v${v.previous_version}` : ""}
               </div>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </Collapsible>

@@ -7,11 +7,14 @@ import { DomainIcon } from "./DomainIcon";
 import { Term, Avatar } from "./Term";
 import { GLOSSARY, persona } from "../lib/glossary";
 import { sgTime } from "../lib/format";
+import { failedChecks, openQuestions, validationPassed } from "../lib/governance";
+import { PillSignals } from "./GovernanceBits";
+import { usageFromAudit, usageFromRecs } from "../lib/pillSignals";
 import { getFeedbackIds, candidateForFeedback, getRememberedRejection, setActiveRec } from "../lib/demoState";
 
 type Go = {
   onGoToHowItWorks: (section?: string) => void;
-  onGoToLiveCase: () => void;
+  onGoToLiveCase: (recId?: string) => void;
   onGoToEvolution: (recId?: string) => void;
   onGoToPill: (pillId: string) => void;
 };
@@ -48,6 +51,7 @@ function feedFromAudit(items: AuditEntry[], pillName: (id: string) => string): F
       case "PILL_REJECTED": text = <>rejected {n}{a.detail?.note ? <> — “{String(a.detail.note)}”</> : null}</>; break;
       case "PILL_SUPERSEDED": text = <>replaced {n} with v{String(a.detail?.successor ?? "")}</>; break;
       case "PILL_DEPRECATED": text = <>retired {n}</>; break;
+      case "SCRIPTED_REVIEWER_CORRECTION": text = <>corrected the AI draft of {n} after source-grounded checks</>; break;
       case "CASE_CREATED": text = <>opened an assessment at Harbour Exchange</>; break;
       case "HUMAN_DECISION": text = a.detail?.decision === "escalate" ? <><Term k="escalate">escalated</Term> a situation</> : <>recorded a decision</>; break;
       case "OUTCOME_RECORDED": text = <>reported what actually happened</>; break;
@@ -130,9 +134,10 @@ export function Home({ onGoToHowItWorks, onGoToLiveCase, onGoToEvolution, onGoTo
   if (role === "operator" || role === "approver") {
     for (const r of recs ?? []) {
       if (r.result.decision === "ESCALATE" && !r.human_decision && role === "operator") {
-        tasks.push({ key: `dec-${r.id}`, tone: "warning", title: "Escalation awaiting your decision",
-          detail: `Assessment at ${sgTime(r.created_at)}.`,
-          cta: "Open case", go: onGoToLiveCase });
+        const fromAlarm = Object.values(r.observations ?? {}).some((o) => /^BMS\b/i.test(o.source));
+        tasks.push({ key: `dec-${r.id}`, tone: "warning", title: fromAlarm ? "Building alarm: Sifu advises escalation" : "Escalation awaiting your decision",
+          detail: fromAlarm ? `Raised automatically by the building system at ${sgTime(r.created_at)}.` : `Assessment at ${sgTime(r.created_at)}.`,
+          cta: "Open case", go: () => onGoToLiveCase(r.id) });
       } else if (r.human_decision && !r.outcome && role === "operator") {
         tasks.push({ key: `out-${r.id}`, tone: "action", title: "Record what actually happened",
           detail: `Escalation at ${sgTime(r.created_at)} has no outcome yet.`,
@@ -159,12 +164,20 @@ export function Home({ onGoToHowItWorks, onGoToLiveCase, onGoToEvolution, onGoTo
         detail: why ? `Reviewer: “${why.note}”` : "See the reviewer's reason and resubmit a revised candidate.",
         cta: "Revise & resubmit", go: () => onGoToEvolution() });
     }
-    if (c.status === "IN_REVIEW" && role === "reviewer" && !(c.review && c.validation)) {
+    const held = c.status === "IN_REVIEW" && (openQuestions(c).length > 0 || failedChecks(c).length > 0);
+    if (held && (role === "reviewer" || role === "expert")) {
+      const clarify = openQuestions(c).length > 0;
+      tasks.push({ key: `held-${c.version}`, tone: "warning",
+        title: clarify ? `${name(c.pill_id)} v${c.version}: expert clarification required` : `${name(c.pill_id)} v${c.version}: AI draft needs review`,
+        detail: clarify ? "Revision blocked from release. The current approved Pill remains active." : "Source-grounded checks did not pass. Human correction required before approval.",
+        cta: "Open", go: () => onGoToEvolution() });
+    }
+    if (!held && c.status === "IN_REVIEW" && role === "reviewer" && !(c.review && c.validation)) {
       tasks.push({ key: `rev-${c.version}`, tone: "warning", title: `Review ${name(c.pill_id)} v${c.version}`,
         detail: c.review ? "Review recorded — regression validation still to run." : "Independent review and regression tests required.",
         cta: "Open review", go: () => onGoToEvolution() });
     }
-    if (c.status === "IN_REVIEW" && role === "approver" && c.review && c.validation) {
+    if (!held && c.status === "IN_REVIEW" && role === "approver" && c.review && validationPassed(c)) {
       tasks.push({ key: `app-${c.version}`, tone: "warning", title: `Release decision: ${name(c.pill_id)} v${c.version}`,
         detail: "Reviewed and validated. Approving supersedes the current version.",
         cta: "Decide", go: () => onGoToEvolution() });
@@ -219,7 +232,7 @@ export function Home({ onGoToHowItWorks, onGoToLiveCase, onGoToEvolution, onGoTo
         <div className="home-eyebrow">Harbour Exchange · building operations knowledge</div>
         <h1 className="home-title">{role === "viewer" ? "Welcome" : `${greeting()}, ${me.name.split(" ")[0]}`}</h1>
         <p className="home-sub">
-          <span className="home-me"><Avatar actor={role} size={22} /> {me.name} · {me.title} <span className="text-muted">(demo persona)</span></span>
+          <span className="home-me"><Avatar actor={role} size={22} /> {me.name}, {me.title}</span>
         </p>
 
         <div className="kb-search">
@@ -285,14 +298,15 @@ export function Home({ onGoToHowItWorks, onGoToLiveCase, onGoToEvolution, onGoTo
                     <div className="task-title">{t.title}</div>
                     <div className="task-detail">{t.detail}</div>
                   </div>
-                  <span className="task-cta">{t.cta} →</span>
+                  <span className="task-cta">{t.cta}</span>
                 </li>
               ))}
             </ul>
           )}
 
-          <h2 className="home-h2 mt-32">Knowledge library <span className="text-muted home-h2-note">{library.length} <Term k="pill">pills</Term> · one current version each</span></h2>
+          <h2 className="home-h2 mt-32">Knowledge library</h2>
           <div className="lib-grid">
+            {/* usage comes from the operator's cases, or the audit trail for reviewers and approvers */}
             {library.map(({ current: v, pending }) => (
               <article key={v.pill_id} className="lib-card" onClick={() => onGoToPill(v.pill_id)}>
                 <div className="lib-head">
@@ -303,21 +317,22 @@ export function Home({ onGoToHowItWorks, onGoToLiveCase, onGoToEvolution, onGoTo
                 <div className="lib-desc">{v.content.description}</div>
                 <div className="lib-meta">
                   <span className={v.status === "APPROVED" ? "trust-ok" : "trust-other"}>
-                    {v.status === "APPROVED" ? "✓ Approved" : v.status.toLowerCase()} · v{v.version}
+                    {v.status === "APPROVED" ? "✓ Approved" : v.status.toLowerCase()} v{v.version}
                   </span>
-                  <span>{v.content.rules.length} rules · {v.content.evaluation.length} test situations</span>
+                  <span>{v.content.rules.length} rules, {v.content.evaluation.length} test situations</span>
                 </div>
                 <div className="lib-people">
                   <Avatar actor={v.author} size={22} />
-                  <span>From <b>{persona(v.author).name}</b> · owner {persona(v.owner).name}</span>
+                  <span>From <b>{persona(v.author).name}</b>, owned by {persona(v.owner).name}</span>
                 </div>
-                {pending && <div className="lib-pending">v{pending.version} {pending.status === "DRAFT" ? "drafted" : "in review"} — not in use yet</div>}
+                <PillSignals pill={v} usage={(usageFromRecs(recs) ?? usageFromAudit(audit))?.[v.pill_id] ?? ((recs || audit) ? { count: 0, last: null } : undefined)} />
+                {pending && <div className="lib-pending">v{pending.version} {openQuestions(pending).length ? "blocked pending expert clarification" : failedChecks(pending).length ? "AI draft needs review" : pending.status === "DRAFT" ? "drafted" : "in review"} — not in use yet</div>}
               </article>
             ))}
           </div>
 
           <div className="how-teaser">
-            New to the team? Read the <a onClick={() => onGoToHowItWorks()}>Guide</a> · <a onClick={() => onGoToHowItWorks("glossary")}>Glossary</a>
+            New to the team? Read the <a onClick={() => onGoToHowItWorks()}>Guide</a> or the <a onClick={() => onGoToHowItWorks("glossary")}>Glossary</a>
           </div>
         </section>
 
@@ -332,13 +347,13 @@ export function Home({ onGoToHowItWorks, onGoToLiveCase, onGoToEvolution, onGoTo
                   <Avatar actor={f.actor} size={30} />
                   <div>
                     <div className="feed-text"><b>{persona(f.actor).name}</b> {f.text}</div>
-                    <div className="feed-time">{persona(f.actor).title} · {sgTime(f.at)}</div>
+                    <div className="feed-time">{persona(f.actor).title}, {sgTime(f.at)}</div>
                   </div>
                 </li>
               ))}
             </ul>
           )}
-          {!audit && <div className="feed-note">Showing activity visible to your role.</div>}
+          
         </aside>
       </div>
       )}

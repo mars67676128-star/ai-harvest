@@ -107,7 +107,7 @@ export function HowItWorks({ onStart }: { onStart: () => void }) {
           <div className="how-title">Demo scenario</div>
           <div className="text-dim">Harbour Exchange basement sump, heavy rain — the pump is green, but the water is rising.</div>
         </div>
-        <button className="btn btn-primary" onClick={onStart}>Open Live Case →</button>
+        <button className="btn btn-primary" onClick={onStart}>Open Live Case</button>
       </div>
     </div>
   );

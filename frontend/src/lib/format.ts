@@ -76,6 +76,8 @@ export function conditionsText(when: Array<{ input: string; op: string; value: b
 export function cleanText(text: string | null | undefined): string {
   if (!text) return "";
   if (/^Compiled from capture:/i.test(String(text))) return "First version, compiled from the expert interview";
+  const corrected = String(text).match(/HUMAN CORRECTION.*?AI draft v([\w.-]+)/i);
+  if (corrected) return `Human correction of AI draft v${corrected[1]}, from the expert's recorded evidence`;
   return String(text)
     .replace(/^SYNTHETIC[A-Z ]*:\s*/i, "")
     .replace(/SYNTHETIC scripted (\w+);\s*demo role simulation, not qualified field approval\.?/i, "Signed off ($1)")

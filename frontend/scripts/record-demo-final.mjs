@@ -38,6 +38,14 @@ replaceRequired(
   "dock mascot safely",
 );
 
+// The first demo question is recording-only deterministic now, so an Ask Tan CTA should
+// render quickly. Fail fast if it does not instead of wasting another 150-second capture.
+replaceRequired(
+  /askTan\.waitFor\(\{ state: "visible", timeout: 150_000 \}\)/,
+  'askTan.waitFor({ state: "visible", timeout: 30_000 })',
+  "expert route fail-fast timeout",
+);
+
 // Teaching-validated scene: zoom only after the new heading is stable.
 replaceRequired(
   /    const validatedHeading = page\.getByRole\("heading", \{ name: "Teaching validated" \}\);\n    await validatedHeading\.waitFor\(\{ timeout: 30_000 \}\);\n    await cameraTo\(page, validatedHeading, 1\.22\);\n    await focus\(page, validatedHeading, 22\);\n    await caption\(page, "Validated\. Attributable\. Reusable\.", 900\);\n    await unfocus\(page\);\n    await cameraReset\(page\);/,

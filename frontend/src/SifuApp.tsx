@@ -1,7 +1,13 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  askSifu,
+  getSifuStatus,
+  type SifuAnswer,
+  type SifuExpertMatch,
+  type SifuStatus,
+} from "./api";
 
 type View = "ask" | "knowledge" | "cases" | "requests" | "reviews" | "expertise";
-type ChatPhase = "empty" | "gap" | "expert" | "candidate" | "confirmed";
 
 type KnowledgeItem = {
   id: string;
@@ -10,6 +16,12 @@ type KnowledgeItem = {
   source: string;
   status: "validated" | "candidate" | "superseded";
   used: number;
+};
+
+type Exchange = {
+  id: number;
+  question: string;
+  answer: SifuAnswer;
 };
 
 const seededKnowledge: KnowledgeItem[] = [
@@ -51,12 +63,21 @@ const sampleQuestion = "Pump says RUNNING but the basement water is still rising
 
 export default function SifuApp() {
   const [view, setView] = useState<View>("ask");
-  const [chatPhase, setChatPhase] = useState<ChatPhase>("empty");
-  const [question, setQuestion] = useState("");
   const [draft, setDraft] = useState("");
-  const [candidateOpen, setCandidateOpen] = useState(false);
   const [validated, setValidated] = useState(false);
   const [knowledgeQuery, setKnowledgeQuery] = useState("");
+  const [exchanges, setExchanges] = useState<Exchange[]>([]);
+  const [pendingQuestion, setPendingQuestion] = useState("");
+  const [agentError, setAgentError] = useState<string | null>(null);
+  const [agentStatus, setAgentStatus] = useState<SifuStatus | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [requestedExpert, setRequestedExpert] = useState<SifuExpertMatch | null>(null);
+
+  useEffect(() => {
+    getSifuStatus()
+      .then(setAgentStatus)
+      .catch(() => setAgentStatus(null));
+  }, []);
 
   const knowledge = useMemo(() => {
     if (!validated) return seededKnowledge;
@@ -65,25 +86,47 @@ export default function SifuApp() {
     );
   }, [validated]);
 
-  const submitQuestion = (event: FormEvent) => {
-    event.preventDefault();
-    const text = draft.trim();
-    if (!text) return;
-    setQuestion(text);
+  const runQuestion = async (text: string) => {
+    const question = text.trim();
+    if (!question || loading) return;
+
+    setLoading(true);
+    setPendingQuestion(question);
+    setAgentError(null);
+    setRequestedExpert(null);
     setDraft("");
-    setChatPhase("gap");
+
+    const conversation = exchanges.flatMap((exchange) => [
+      { role: "employee" as const, speaker: "Amanda Lee", content: exchange.question },
+      { role: "sifu" as const, speaker: "Sifu", content: exchange.answer.answer },
+    ]);
+
+    try {
+      const answer = await askSifu({ question, conversation });
+      setExchanges((current) => [
+        ...current,
+        { id: Date.now(), question, answer },
+      ]);
+      setAgentStatus((current) => current ? { ...current, configured: true } : current);
+    } catch (error) {
+      setAgentError(error instanceof Error ? error.message : "Sifu AI request failed.");
+    } finally {
+      setPendingQuestion("");
+      setLoading(false);
+    }
   };
 
-  const startPreview = () => {
-    setQuestion(sampleQuestion);
-    setChatPhase("gap");
+  const submitQuestion = (event: FormEvent) => {
+    event.preventDefault();
+    void runQuestion(draft);
   };
 
   const resetConversation = () => {
-    setQuestion("");
     setDraft("");
-    setChatPhase("empty");
-    setCandidateOpen(false);
+    setExchanges([]);
+    setPendingQuestion("");
+    setAgentError(null);
+    setRequestedExpert(null);
   };
 
   return (
@@ -97,6 +140,7 @@ export default function SifuApp() {
         }}
         requestCount={2}
         reviewCount={validated ? 2 : 3}
+        agentStatus={agentStatus}
       />
 
       <div className="sifu-stage">
@@ -106,6 +150,9 @@ export default function SifuApp() {
             <span className="topbar-motto">Ask once. Teach forever.</span>
           </div>
           <div className="topbar-user">
+            <span className={`ai-connection ${agentStatus?.configured ? "live" : "offline"}`}>
+              <span />{agentStatus?.configured ? "Live AI" : "AI not configured"}
+            </span>
             <button className="quiet-icon" aria-label="Search"><SearchIcon /></button>
             <div className="user-avatar">AL</div>
             <div className="user-copy"><strong>Amanda Lee</strong><span>Operations</span></div>
@@ -115,15 +162,16 @@ export default function SifuApp() {
         <main className="sifu-main">
           {view === "ask" && (
             <AskView
-              phase={chatPhase}
-              question={question}
+              exchanges={exchanges}
+              pendingQuestion={pendingQuestion}
               draft={draft}
+              loading={loading}
+              error={agentError}
+              requestedExpert={requestedExpert}
               onDraftChange={setDraft}
               onSubmit={submitQuestion}
-              onPreview={startPreview}
-              onAskExpert={() => setChatPhase("expert")}
-              onReviewInsight={() => setCandidateOpen(true)}
-              candidateConfirmed={chatPhase === "confirmed"}
+              onPreview={() => void runQuestion(sampleQuestion)}
+              onAskExpert={setRequestedExpert}
             />
           )}
           {view === "knowledge" && (
@@ -135,7 +183,14 @@ export default function SifuApp() {
             />
           )}
           {view === "cases" && <CasesView />}
-          {view === "requests" && <RequestsView onOpen={() => { setView("ask"); setQuestion(sampleQuestion); setChatPhase("expert"); }} />}
+          {view === "requests" && (
+            <RequestsView
+              onOpen={() => {
+                setView("ask");
+                setDraft(sampleQuestion);
+              }}
+            />
+          )}
           {view === "reviews" && (
             <ReviewsView
               validated={validated}
@@ -145,16 +200,6 @@ export default function SifuApp() {
           {view === "expertise" && <ExpertiseView />}
         </main>
       </div>
-
-      {candidateOpen && (
-        <CandidateOverlay
-          onClose={() => setCandidateOpen(false)}
-          onConfirm={() => {
-            setCandidateOpen(false);
-            setChatPhase("confirmed");
-          }}
-        />
-      )}
     </div>
   );
 }
@@ -165,8 +210,9 @@ function Sidebar(props: {
   onNewQuestion: () => void;
   requestCount: number;
   reviewCount: number;
+  agentStatus: SifuStatus | null;
 }) {
-  const { view, onNavigate, onNewQuestion, requestCount, reviewCount } = props;
+  const { view, onNavigate, onNewQuestion, requestCount, reviewCount, agentStatus } = props;
   return (
     <aside className="sifu-sidebar">
       <div className="brand-lockup">
@@ -196,7 +242,10 @@ function Sidebar(props: {
         <button onClick={() => onNavigate("ask")}>Chiller restart</button>
         <button onClick={() => onNavigate("ask")}>Tenant access</button>
       </div>
-      <div className="sidebar-footer"><span className="presence-dot" />Sifu is ready</div>
+      <div className={`sidebar-footer ${agentStatus?.configured ? "live" : "offline"}`}>
+        <span className="presence-dot" />
+        {agentStatus?.configured ? `Live AI · ${agentStatus.provider}` : "Live AI not configured"}
+      </div>
     </aside>
   );
 }
@@ -212,33 +261,36 @@ function NavItem(props: { active?: boolean; icon: React.ReactNode; label: string
 }
 
 function AskView(props: {
-  phase: ChatPhase;
-  question: string;
+  exchanges: Exchange[];
+  pendingQuestion: string;
   draft: string;
+  loading: boolean;
+  error: string | null;
+  requestedExpert: SifuExpertMatch | null;
   onDraftChange: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
   onPreview: () => void;
-  onAskExpert: () => void;
-  onReviewInsight: () => void;
-  candidateConfirmed: boolean;
+  onAskExpert: (expert: SifuExpertMatch) => void;
 }) {
-  if (props.phase === "empty") {
+  const empty = props.exchanges.length === 0 && !props.pendingQuestion && !props.error;
+
+  if (empty) {
     return (
       <section className="ask-empty page-fade">
         <div className="mentor-hero"><SifuAvatar size="hero" mood="calm" /></div>
         <p className="eyebrow">Good evening, Amanda.</p>
         <h1>What can I help you with?</h1>
         <p className="hero-copy">Ask about a situation at work. I’ll use validated organisational knowledge, or find the right person when I don’t know.</p>
-        <Composer value={props.draft} onChange={props.onDraftChange} onSubmit={props.onSubmit} />
+        <Composer value={props.draft} onChange={props.onDraftChange} onSubmit={props.onSubmit} disabled={props.loading} />
         <div className="starter-row">
           <button onClick={props.onPreview}>Equipment issue</button>
           <button onClick={() => props.onDraftChange("What is the correct escalation path for a tenant access issue?")}>Procedure</button>
           <button onClick={() => props.onDraftChange("Who has experience with BMS telemetry faults?")}>Find an expert</button>
         </div>
         <div className="recent-learning">
-          <span>Recently learned</span>
-          <button onClick={props.onPreview}>RUNNING status ≠ effective drainage <ArrowIcon /></button>
-          <button>Alternative access routes must be verified <ArrowIcon /></button>
+          <span>Try Sifu</span>
+          <button onClick={props.onPreview}>Ask an unseen free-form question <ArrowIcon /></button>
+          <button onClick={() => props.onDraftChange("What should I check before escalating a chiller restart issue?")}>Ask about another situation <ArrowIcon /></button>
         </div>
       </section>
     );
@@ -246,58 +298,133 @@ function AskView(props: {
 
   return (
     <section className="conversation-page page-fade">
-      <div className="conversation-title"><span>Basement drainage question</span><button>•••</button></div>
+      <div className="conversation-title"><span>Sifu conversation</span><button>•••</button></div>
       <div className="conversation-stream">
-        <HumanMessage name="Amanda Lee">{props.question}</HumanMessage>
+        {props.exchanges.map((exchange) => (
+          <div className="exchange" key={exchange.id}>
+            <HumanMessage name="Amanda Lee">{exchange.question}</HumanMessage>
+            <SifuAnswerMessage answer={exchange.answer} onAskExpert={props.onAskExpert} />
+          </div>
+        ))}
 
-        {props.phase === "gap" && (
-          <SifuMessage mood="searching">
-            <p>I don’t have validated organisational knowledge that fully covers this exact situation.</p>
-            <p className="muted-copy">Rather than guess, I found someone whose experience is closely related.</p>
-            <PersonInline
-              initials="TW"
-              name="Tan Wei Ming"
-              role="Senior M&E Technician"
-              tags={["Sump systems · Strong", "Drainage · Strong", "23 related cases"]}
-              action="Ask Tan"
-              onAction={props.onAskExpert}
-            />
+        {props.pendingQuestion && (
+          <div className="exchange pending-exchange">
+            <HumanMessage name="Amanda Lee">{props.pendingQuestion}</HumanMessage>
+            <SifuMessage mood="searching">
+              <p>Checking approved organisational knowledge and relevant expertise…</p>
+            </SifuMessage>
+          </div>
+        )}
+
+        {props.error && (
+          <SifuMessage mood="calm">
+            <p><strong>I couldn’t produce a live AI answer.</strong></p>
+            <p className="muted-copy">{props.error}</p>
+            <p className="muted-copy">I won’t substitute a canned response. Configure a live provider or check the backend connection, then try again.</p>
           </SifuMessage>
         )}
 
-        {(props.phase === "expert" || props.phase === "confirmed") && (
+        {props.requestedExpert && (
           <>
-            <SystemLine>Tan Wei Ming joined · Sifu shared only the relevant case context</SystemLine>
-            <HumanMessage name="Tan Wei Ming" tone="expert">
-              A RUNNING indication only tells you that the motor has been commanded to operate. It doesn’t prove that water is actually being discharged. Check the water-level trend and actual discharge first.
-            </HumanMessage>
-            <SifuMessage mood="thinking">
-              <p>Tan, one clarification so I don’t preserve this too broadly:</p>
-              <p><strong>Does this apply generally, or specifically where RUNNING reflects command or motor state?</strong></p>
+            <SystemLine>Expert request prepared for {props.requestedExpert.name} · awaiting a human response</SystemLine>
+            <SifuMessage mood="calm">
+              <p>I’ve kept your question and the relevant source context together for {props.requestedExpert.name}.</p>
+              <p className="muted-copy">Until that person responds and the organisation validates any reusable teaching, I’ll treat this as an unresolved knowledge gap.</p>
             </SifuMessage>
-            <HumanMessage name="Tan Wei Ming" tone="expert">
-              Specifically where RUNNING comes from command or motor state. If actual discharge is measured independently, that is different. If water is still climbing despite RUNNING, I would escalate and verify the drainage path.
-            </HumanMessage>
-            <div className="insight-event">
-              <span className="spark">✦</span>
-              <div><strong>Sifu noticed a reusable teaching</strong><span>This could help someone facing the same condition later.</span></div>
-              <button onClick={props.onReviewInsight}>Review what I understood <ArrowIcon /></button>
-            </div>
-            {props.candidateConfirmed && (
-              <div className="confirmed-event">
-                <span>✓</span>
-                <div><strong>Meaning confirmed by Tan Wei Ming</strong><p>Candidate Pill created and sent to Jennifer Lim, Knowledge Owner for Technical Services.</p></div>
-              </div>
-            )}
           </>
         )}
       </div>
-      <div className="conversation-composer-wrap"><Composer value={props.draft} onChange={props.onDraftChange} onSubmit={props.onSubmit} compact /></div>
+      <div className="conversation-composer-wrap">
+        <Composer value={props.draft} onChange={props.onDraftChange} onSubmit={props.onSubmit} compact disabled={props.loading} />
+      </div>
     </section>
   );
 }
 
-function Composer(props: { value: string; onChange: (value: string) => void; onSubmit: (event: FormEvent) => void; compact?: boolean }) {
+function SifuAnswerMessage(props: { answer: SifuAnswer; onAskExpert: (expert: SifuExpertMatch) => void }) {
+  const { answer } = props;
+  const mood = answer.coverage === "insufficient" ? "searching" : answer.reusable_insight.detected ? "thinking" : "calm";
+  return (
+    <SifuMessage mood={mood}>
+      <div className={`coverage-line coverage-${answer.coverage}`}>
+        <span>{answer.coverage === "full" ? "Validated coverage" : answer.coverage === "partial" ? "Partial coverage" : "Knowledge gap"}</span>
+        <span>Risk · {answer.risk}</span>
+      </div>
+      <p className="sifu-answer-text">{answer.answer}</p>
+
+      {answer.known_points.length > 0 && (
+        <div className="answer-detail">
+          <strong>What I can support</strong>
+          <ul>{answer.known_points.map((point) => <li key={point}>{point}</li>)}</ul>
+        </div>
+      )}
+
+      {answer.missing_information.length > 0 && (
+        <div className="answer-detail muted">
+          <strong>Still unresolved</strong>
+          <ul>{answer.missing_information.map((point) => <li key={point}>{point}</li>)}</ul>
+        </div>
+      )}
+
+      {answer.follow_up_question && (
+        <p className="follow-up-question"><span>One useful clarification</span>{answer.follow_up_question}</p>
+      )}
+
+      {answer.citations.length > 0 && (
+        <div className="knowledge-provenance">
+          <span className="provenance-label">✓ Validated organisational knowledge</span>
+          {answer.citations.map((citation) => (
+            <div className="provenance-item" key={`${citation.pill_id}-${citation.version}`}>
+              <strong>{citation.title}</strong>
+              <span>{citation.domain} · v{citation.version}</span>
+              <span>Taught by {citation.source_expert ?? "recorded expert"}{citation.validator ? ` · Validated by ${citation.validator}` : ""}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {answer.basis === "expert_context" || answer.basis === "mixed" ? (
+        <p className="current-guidance-note">Current expert guidance is helping this case, but it is not automatically validated organisational knowledge.</p>
+      ) : null}
+
+      {answer.recommended_expert && (
+        <PersonInline
+          initials={initials(answer.recommended_expert.name)}
+          name={answer.recommended_expert.name}
+          role={answer.recommended_expert.role}
+          tags={[...answer.recommended_expert.skills.slice(0, 2), answer.recommended_expert.reason]}
+          action={`Ask ${firstName(answer.recommended_expert.name)}`}
+          onAction={() => props.onAskExpert(answer.recommended_expert!)}
+        />
+      )}
+
+      {answer.risk === "high" && <p className="risk-note"><strong>High consequence if wrong.</strong> {answer.risk_reason}</p>}
+
+      {answer.reusable_insight.detected && (
+        <div className="insight-event inline-insight">
+          <span className="spark">✦</span>
+          <div>
+            <strong>Sifu noticed a possible reusable teaching</strong>
+            <span>{answer.reusable_insight.summary}</span>
+          </div>
+          <span className="insight-status">Expert confirmation required</span>
+        </div>
+      )}
+
+      <div className="ai-trace">Live AI · {String(answer.ai.provider ?? "provider")} · {String(answer.ai.model ?? "model")}</div>
+    </SifuMessage>
+  );
+}
+
+function initials(name: string) {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
+}
+
+function firstName(name: string) {
+  return name.split(/\s+/).filter(Boolean)[0] ?? name;
+}
+
+function Composer(props: { value: string; onChange: (value: string) => void; onSubmit: (event: FormEvent) => void; compact?: boolean; disabled?: boolean }) {
   return (
     <form className={`composer ${props.compact ? "compact" : ""}`} onSubmit={props.onSubmit}>
       <textarea
@@ -305,6 +432,7 @@ function Composer(props: { value: string; onChange: (value: string) => void; onS
         value={props.value}
         rows={props.compact ? 2 : 3}
         placeholder="Ask Sifu about your work..."
+        disabled={props.disabled}
         onChange={(event) => props.onChange(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) {
@@ -314,9 +442,9 @@ function Composer(props: { value: string; onChange: (value: string) => void; onS
         }}
       />
       <div className="composer-actions">
-        <button type="button" className="composer-tool" aria-label="Attach"><PlusIcon /></button>
-        <span className="composer-hint">Enter to send · Shift + Enter for a new line</span>
-        <button type="submit" className="send-button" aria-label="Send"><SendIcon /></button>
+        <button type="button" className="composer-tool" aria-label="Attach" disabled={props.disabled}><PlusIcon /></button>
+        <span className="composer-hint">{props.disabled ? "Sifu is thinking…" : "Enter to send · Shift + Enter for a new line"}</span>
+        <button type="submit" className="send-button" aria-label="Send" disabled={props.disabled}><SendIcon /></button>
       </div>
     </form>
   );
@@ -355,25 +483,6 @@ function PersonInline(props: { initials: string; name: string; role: string; tag
 
 function SystemLine({ children }: { children: React.ReactNode }) {
   return <div className="system-line"><span />{children}<span /></div>;
-}
-
-function CandidateOverlay(props: { onClose: () => void; onConfirm: () => void }) {
-  return (
-    <div className="candidate-backdrop" role="dialog" aria-modal="true" aria-label="Candidate knowledge review">
-      <button className="candidate-close" onClick={props.onClose} aria-label="Close">×</button>
-      <article className="candidate-manuscript">
-        <div className="manuscript-kicker">Candidate Knowledge Pill</div>
-        <h2>RUNNING status does not confirm effective drainage</h2>
-        <p className="manuscript-intro">Sifu extracted this from Tan’s explanation. Tan is confirming that the interpretation is accurate — not approving company policy.</p>
-        <KnowledgeSection title="Principle">A RUNNING state confirms command or motor state, not actual drainage effectiveness.</KnowledgeSection>
-        <KnowledgeSection title="Applies when">RUNNING is derived from control or motor status rather than independently measured discharge.</KnowledgeSection>
-        <KnowledgeSection title="Check"><ul><li>Water-level trend</li><li>Actual discharge</li></ul></KnowledgeSection>
-        <KnowledgeSection title="Escalate when">Water continues rising despite RUNNING status.</KnowledgeSection>
-        <KnowledgeSection title="Source"><p>Tan Wei Ming · Senior M&E Technician</p><p>Case #4387 · Basement B2</p></KnowledgeSection>
-        <div className="manuscript-actions"><button className="text-action" onClick={props.onClose}>Not reusable</button><button className="text-action">Edit</button><button className="primary-action" onClick={props.onConfirm}>Looks right <CheckIcon /></button></div>
-      </article>
-    </div>
-  );
 }
 
 function KnowledgeSection(props: { title: string; children: React.ReactNode }) {
@@ -432,13 +541,10 @@ function TimelineGroup(props: { title: string; rows: string[][] }) {
 function RequestsView({ onOpen }: { onOpen: () => void }) {
   return (
     <section className="index-page page-fade">
-      <div className="page-heading"><div><span className="eyebrow">Questions routed to you</span><h1>Expertise requests</h1><p>Sifu asks when your experience is relevant. Saying “I don’t know” is a valid outcome.</p></div></div>
-      <section className="timeline-group"><h2>Needs your input</h2>
-        <button className="timeline-row high" onClick={onOpen}><span className="request-pulse" /><span className="timeline-title"><strong>Pump RUNNING while water rises</strong><small>Amanda Lee · Basement B2 · Strong expertise match</small></span><span>8 min</span><ArrowIcon /></button>
-        <button className="timeline-row"><span className="request-pulse" /><span className="timeline-title"><strong>Chiller restart after brief outage</strong><small>Daniel Wong · Tower C · Relevant</small></span><span>41 min</span><ArrowIcon /></button>
-      </section>
-      <section className="timeline-group"><h2>Previously handled</h2>
-        <button className="timeline-row"><span className="timeline-title"><strong>Repeated sump alarm after storm</strong><small>Resolved · Candidate knowledge created</small></span><span>Yesterday</span><ArrowIcon /></button>
+      <div className="page-heading"><div><span className="eyebrow">Workflow preview</span><h1>Expertise requests</h1><p>This queue is the next live workflow to connect. Sifu’s Ask surface no longer fabricates expert replies.</p></div></div>
+      <section className="timeline-group"><h2>Design-state examples</h2>
+        <button className="timeline-row high" onClick={onOpen}><span className="request-pulse" /><span className="timeline-title"><strong>Pump RUNNING while water rises</strong><small>Amanda Lee · Basement B2 · example request</small></span><span>Preview</span><ArrowIcon /></button>
+        <button className="timeline-row"><span className="request-pulse" /><span className="timeline-title"><strong>Chiller restart after brief outage</strong><small>Daniel Wong · Tower C · example request</small></span><span>Preview</span><ArrowIcon /></button>
       </section>
     </section>
   );

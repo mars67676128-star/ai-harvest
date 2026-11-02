@@ -71,6 +71,27 @@ export interface ExpertResponseResult {
   conversation: SifuConversation;
 }
 
+export interface KnowledgeCandidate {
+  id: string;
+  kind: "knowledge_candidate";
+  parent_id: string;
+  created_at: string;
+  title: string;
+  principle: string;
+  applies_when: string[];
+  checks: string[];
+  escalate_when: string[];
+  exceptions: string[];
+  rationale?: string | null;
+  source_experts: string[];
+  unresolved_questions: string[];
+  source_request_id: string;
+  source_expert_id: string;
+  source_expert_name: string;
+  status: "awaiting_expert_confirmation" | "confirmed" | "not_reusable";
+  decision?: Record<string, unknown> | null;
+}
+
 export async function startSifuConversation(question: string): Promise<SifuConversation> {
   return request<SifuConversation>("/sifu/conversations", "POST", { question, context: {} });
 }
@@ -110,5 +131,25 @@ export async function respondToExpertiseRequest(
   return request<ExpertResponseResult>(`/sifu/expertise-requests/${requestId}/respond`, "POST", {
     content,
     outcome,
+  });
+}
+
+export async function draftKnowledgeCandidate(
+  conversationId: string,
+  sourceRequestId: string,
+): Promise<KnowledgeCandidate> {
+  return request<KnowledgeCandidate>(`/sifu/conversations/${conversationId}/candidate`, "POST", {
+    source_request_id: sourceRequestId,
+  });
+}
+
+export async function decideKnowledgeCandidate(
+  candidateId: string,
+  decision: "confirm" | "not_reusable",
+  note = "",
+): Promise<KnowledgeCandidate> {
+  return request<KnowledgeCandidate>(`/sifu/knowledge-candidates/${candidateId}/decision`, "POST", {
+    decision,
+    note,
   });
 }

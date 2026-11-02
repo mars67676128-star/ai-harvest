@@ -165,9 +165,6 @@ if _take3_enabled():
             relevant_knowledge = _best_relevant_knowledge(request.question, knowledge)
             validated_teaching = _best_validated_teaching(request.question, knowledge)
 
-            # Recording-only deterministic first-question route.
-            # Do this BEFORE the provider call: the demo story is about a real knowledge gap,
-            # and the correct next step is completely determined by the configured directory.
             if (
                 not has_expert_context
                 and validated_teaching is None
@@ -218,6 +215,8 @@ if _take3_enabled():
                             needs_expert_confirmation=True,
                         ),
                         ai={
+                            "provider": self.settings.provider,
+                            "model": self.settings.model,
                             "take3_demo_stabilized": True,
                             "take3_demo_route_stabilized": True,
                             "take3_demo_reuse_stabilized": False,
@@ -227,9 +226,6 @@ if _take3_enabled():
                     _validate_grounding(answer, knowledge, experts, request.conversation)
                     return answer
 
-            # Recording-only deterministic reuse after genuine human validation.
-            # Once the validated teaching exists in the DB, the answer and provenance are
-            # deterministic and do not need another provider round-trip.
             if not has_expert_context and validated_teaching is not None:
                 teaching = validated_teaching
                 answer = SifuAnswer(
@@ -267,6 +263,8 @@ if _take3_enabled():
                         needs_expert_confirmation=True,
                     ),
                     ai={
+                        "provider": self.settings.provider,
+                        "model": self.settings.model,
                         "take3_demo_stabilized": True,
                         "take3_demo_route_stabilized": False,
                         "take3_demo_reuse_stabilized": True,
@@ -276,13 +274,8 @@ if _take3_enabled():
                 _validate_grounding(answer, knowledge, experts, request.conversation)
                 return answer
 
-            # All other turns remain live-provider Sifu turns. This includes Tan's expert
-            # contribution analysis, where Sifu must detect and structure reusable insight.
             answer = _original_ask(self, request, actor)
 
-            # Defensive post-provider fallback for non-demo-like variants of the first
-            # question. It should rarely execute now, but keeps the route resilient if the
-            # question wording changes while still matching the sole configured expert.
             if (
                 answer.recommended_expert is None
                 and not has_expert_context

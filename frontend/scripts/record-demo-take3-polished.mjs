@@ -7,6 +7,7 @@ const sourcePath = path.join(__dirname, "record-demo-take3.mjs");
 const runtimePath = path.join(__dirname, ".record-demo-take3-polished.runtime.mjs");
 
 let source = await fs.readFile(sourcePath, "utf8");
+source = source.replace(/\r\n/g, "\n");
 
 function replaceOnce(from, to, label) {
   const first = source.indexOf(from);
@@ -89,8 +90,6 @@ replaceOnce(
   await ripple(page, locator);
   if (impact) await impactFlash(page);
   await locator.click();
-  // Clear the highlight almost immediately after the click. Some controls disappear
-  // synchronously, and leaving the old box behind produces an empty-space highlight.
   await sleep(120);
   await unfocus(page);
   await sleep(Math.max(0, hold - 120));
@@ -176,8 +175,6 @@ replaceOnce(
     await validatedHeading.waitFor({ timeout: 30_000 });
     await sleep(520);
     await setCriticalScene(page, true);
-    // Use the actual text range after the new screen has rendered. No root-level camera
-    // transform here, so the emphasis cannot drift away from the words.
     await focusRenderedText(page, validatedHeading, 18);
     await caption(page, "Validated. Attributable. Reusable.", 1500);
     await sleep(520);
@@ -202,12 +199,17 @@ replaceOnce(
     await caption(page, "Validated organisational knowledge — with provenance.", 1050);
     await unfocus(page);
     await cameraReset(page);`,
-`    // Scope the wait to the completed Sifu message. The old generic text locator could
-    // match too early while the agent was still thinking and highlight an empty region.
-    const validatedMessage = page.locator(".sifu-message").filter({ hasText: /Validated organisational knowledge/i }).last();
+`    const provenance = page.locator(".knowledge-provenance").last();
+    const provenanceWait = Promise.race([
+      provenance.waitFor({ state: "visible", timeout: 75_000 }),
+      page.getByText(/I couldn’t produce a live AI answer/i).waitFor({ state: "visible", timeout: 75_000 }).then(async () => {
+        const text = await page.locator(".sifu-message").last().innerText().catch(() => "Live Sifu request failed.");
+        throw new Error("Validated reuse answer failed: " + text);
+      }),
+    ]);
     await waitWithBridge(
       page,
-      validatedMessage.waitFor({ state: "visible", timeout: 150_000 }),
+      provenanceWait,
       {
         kicker: "THE MEMORY COMPOUNDS",
         title: "The next shift does not start from zero.",
@@ -215,18 +217,17 @@ replaceOnce(
       },
     );
     await sleep(700);
-    const validatedLabel = validatedMessage.getByText(/Validated organisational knowledge/i).first();
-    await validatedLabel.waitFor({ state: "visible", timeout: 30_000 });
+    const validatedLabel = provenance.locator(".provenance-label").first();
+    await validatedLabel.waitFor({ state: "visible", timeout: 15_000 });
     await setCriticalScene(page, true);
     await focusRenderedText(page, validatedLabel, 18);
     await caption(page, "Validated organisational knowledge — with provenance.", 1600);
     await sleep(600);
     await unfocus(page);
     await setCriticalScene(page, false);`,
-  "validated knowledge wait and emphasis",
+  "validated knowledge state wait and emphasis",
 );
 
-// Let the important moments breathe a little more without returning to Take 2's pace.
 source = source
   .replaceAll("hold: 2300", "hold: 2800")
   .replaceAll("hold: 2500", "hold: 3000")

@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .config import Settings
+from .db import digest, object_from_row
 from .errors import DomainError
 from .models import Actor
 from .providers import generate
@@ -101,11 +102,70 @@ class SifuStatus(AgentModel):
     configured_experts: int
 
 
+def _validated_candidate_snapshot(service: Service) -> list[dict]:
+    with service.db.connection() as con:
+        rows = con.execute(
+            "SELECT * FROM objects WHERE kind='knowledge_candidate' ORDER BY created_at DESC"
+        ).fetchall()
+        result = []
+        for row in rows:
+            candidate = object_from_row(row)
+            expert_decision_row = con.execute(
+                "SELECT * FROM objects WHERE parent_id=? AND kind='candidate_decision' "
+                "ORDER BY created_at DESC,id DESC LIMIT 1",
+                (candidate["id"],),
+            ).fetchone()
+            owner_decision_row = con.execute(
+                "SELECT * FROM objects WHERE parent_id=? AND kind='knowledge_owner_decision' "
+                "ORDER BY created_at DESC,id DESC LIMIT 1",
+                (candidate["id"],),
+            ).fetchone()
+            if not expert_decision_row or not owner_decision_row:
+                continue
+            expert_decision = object_from_row(expert_decision_row)
+            owner_decision = object_from_row(owner_decision_row)
+            if expert_decision["decision"] != "confirm" or owner_decision["decision"] != "validate":
+                continue
+            teaching = {
+                "title": candidate["title"],
+                "principle": candidate["principle"],
+                "applies_when": candidate["applies_when"],
+                "checks": candidate["checks"],
+                "escalate_when": candidate["escalate_when"],
+                "exceptions": candidate["exceptions"],
+                "rationale": candidate.get("rationale"),
+            }
+            result.append(
+                {
+                    "pill_id": candidate["id"],
+                    "version": "1",
+                    "content_hash": digest(teaching),
+                    "title": candidate["title"],
+                    "domain": candidate["domain"],
+                    "description": candidate["principle"],
+                    "scope": candidate["applies_when"],
+                    "facts": candidate["checks"],
+                    "expert_observations": [candidate["principle"]],
+                    "assumptions": candidate["applies_when"],
+                    "exceptions": candidate["exceptions"],
+                    "guardrails": candidate["escalate_when"],
+                    "prohibited_actions": [],
+                    "rules": [],
+                    "source_expert": candidate["source_expert_name"],
+                    "validator": candidate["knowledge_owner_name"],
+                    "knowledge_kind": "sifu_validated_teaching",
+                }
+            )
+    return result
+
+
 def _knowledge_snapshot(service: Service, limit: int) -> list[dict]:
+    result = _validated_candidate_snapshot(service)
     approved = [pill for pill in service.governance.list() if pill["status"] == "APPROVED"]
     approved.sort(key=lambda pill: pill["created_at"], reverse=True)
-    result = []
-    for pill in approved[:limit]:
+    for pill in approved:
+        if len(result) >= limit:
+            break
         content = pill["content"]
         result.append(
             {
@@ -125,9 +185,10 @@ def _knowledge_snapshot(service: Service, limit: int) -> list[dict]:
                 "rules": content.get("rules", []),
                 "source_expert": pill.get("author"),
                 "validator": (pill.get("approval") or {}).get("actor"),
+                "knowledge_kind": "legacy_approved_pill",
             }
         )
-    return result
+    return result[:limit]
 
 
 def _expert_snapshot(settings: Settings) -> list[dict]:

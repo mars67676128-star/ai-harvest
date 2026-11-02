@@ -54,7 +54,9 @@ def call(base, method, path, body=None, token="demo-operator"):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--url", default="http://127.0.0.1:8000")
     parser.add_argument("--scenario", choices=sorted(SCENARIOS), default="rising")
     args = parser.parse_args()
@@ -64,24 +66,40 @@ def main():
         key: {"value": v, "unit": unit, "source": src, "observed_at": now, "quality": "verified"}
         for key, (v, unit, src) in SCENARIOS[args.scenario].items()
     }
-    print(f"[BMS] Alarm at Harbour Exchange basement sump ({args.scenario}). Sending readings to Sifu...")
-    case = call(args.url, "POST", "/cases", {
-        "title": "SIMULATED BMS ALARM: basement sump, heavy rain",
-        "asset_id": "harbour-exchange-demo",
-        "asset_type": "office",
-        "equipment": "basement_sump",
-        "context": "wet_weather",
-        "observations": observations,
-        "synthetic": True,
-    })
+    print(
+        f"[BMS] Alarm at Harbour Exchange basement sump ({args.scenario}). Sending readings to Sifu..."
+    )
+    case = call(
+        args.url,
+        "POST",
+        "/cases",
+        {
+            "title": "SIMULATED BMS ALARM: basement sump, heavy rain",
+            "asset_id": "harbour-exchange-demo",
+            "asset_type": "office",
+            "equipment": "basement_sump",
+            "context": "wet_weather",
+            "observations": observations,
+            "synthetic": True,
+        },
+    )
     try:
-        rec = call(args.url, "POST", f"/cases/{case['id']}/invoke", {"pill_ids": PILLS, "include_ai_explanation": True})
+        rec = call(
+            args.url,
+            "POST",
+            f"/cases/{case['id']}/invoke",
+            {"pill_ids": PILLS, "include_ai_explanation": True},
+        )
     except urllib.error.HTTPError as exc:
         print(f"[Sifu] Could not assess: {exc.read().decode()[:300]}")
         raise SystemExit(1)
     result = rec["result"]
-    print(f"[Sifu] Advice: {result['decision']}  (blocked: {', '.join(result['blocked_actions']) or 'none'})")
-    print("[Sifu] The case is waiting on the operator's Home page. Nothing was triggered automatically.")
+    print(
+        f"[Sifu] Advice: {result['decision']}  (blocked: {', '.join(result['blocked_actions']) or 'none'})"
+    )
+    print(
+        "[Sifu] The case is waiting on the operator's Home page. Nothing was triggered automatically."
+    )
 
 
 if __name__ == "__main__":

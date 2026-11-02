@@ -91,7 +91,10 @@ def _can_read(service: Service, conversation: dict, actor: Actor) -> bool:
     if set(actor.roles).intersection({"reviewer", "approver"}):
         return True
     if "expert" in actor.roles:
-        return any(request["expert_id"] == actor.id for request in _requests(service, conversation["id"]))
+        return any(
+            request["expert_id"] == actor.id
+            for request in _requests(service, conversation["id"])
+        )
     return False
 
 
@@ -198,7 +201,11 @@ def attach_sifu_thread_routes(
         _all_roles(actor)
         conversation = _conversation_view(service, conversation_id, actor)
         if conversation["created_by"] != actor.id:
-            raise DomainError(403, "FORBIDDEN", "Only the employee who started the thread may add employee messages")
+            raise DomainError(
+                403,
+                "FORBIDDEN",
+                "Only the employee who started the thread may add employee messages",
+            )
         answer = agent.ask(
             SifuAskRequest(
                 question=body.content,
@@ -234,7 +241,9 @@ def attach_sifu_thread_routes(
             )
         return _conversation_view(service, conversation_id, actor)
 
-    @app.post(prefix + "/sifu/conversations/{conversation_id}/route", status_code=201, tags=["sifu"])
+    @app.post(
+        prefix + "/sifu/conversations/{conversation_id}/route", status_code=201, tags=["sifu"]
+    )
     def route_expert(
         conversation_id: str,
         body: RouteExpert,
@@ -242,7 +251,9 @@ def attach_sifu_thread_routes(
     ):
         conversation = _conversation_view(service, conversation_id, actor)
         if conversation["created_by"] != actor.id:
-            raise DomainError(403, "FORBIDDEN", "Only the employee who started the thread may request an expert")
+            raise DomainError(
+                403, "FORBIDDEN", "Only the employee who started the thread may request an expert"
+            )
         latest = _latest_sifu_answer(service, conversation_id)
         recommended = ((latest or {}).get("answer") or {}).get("recommended_expert")
         if not recommended or recommended.get("id") != body.expert_id:
@@ -255,7 +266,9 @@ def attach_sifu_thread_routes(
             request["expert_id"] == body.expert_id and request["status"] == "pending"
             for request in _requests(service, conversation_id)
         ):
-            raise DomainError(409, "EXPERT_REQUEST_EXISTS", "A pending request already exists for this expert")
+            raise DomainError(
+                409, "EXPERT_REQUEST_EXISTS", "A pending request already exists for this expert"
+            )
         expert = next(
             (entry for entry in settings.expert_directory if entry["id"] == body.expert_id), None
         )
@@ -329,9 +342,13 @@ def attach_sifu_thread_routes(
                 (request_id,),
             ).fetchone()
         if request["expert_id"] != actor.id:
-            raise DomainError(403, "FORBIDDEN", "This expertise request is assigned to another expert")
+            raise DomainError(
+                403, "FORBIDDEN", "This expertise request is assigned to another expert"
+            )
         if existing:
-            raise DomainError(409, "EXPERT_RESPONSE_EXISTS", "This expertise request already has a response")
+            raise DomainError(
+                409, "EXPERT_RESPONSE_EXISTS", "This expertise request already has a response"
+            )
         with service.db.transaction() as con:
             response = add_object(
                 con,

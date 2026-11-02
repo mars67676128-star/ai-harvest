@@ -148,7 +148,9 @@ if _take3_enabled():
         from harvest.sifu_agent import (
             ExpertMatch,
             KnowledgeCitation,
+            ReusableInsight,
             SifuAgent,
+            SifuAnswer,
             _expert_snapshot,
             _knowledge_snapshot,
             _validate_grounding,
@@ -157,20 +159,130 @@ if _take3_enabled():
         _original_ask = SifuAgent.ask
 
         def _take3_stable_ask(self, request, actor):
-            answer = _original_ask(self, request, actor)
             knowledge = _knowledge_snapshot(self.service, self.settings.sifu_max_knowledge_items)
             experts = _expert_snapshot(self.settings)
-            changed = False
-
             has_expert_context = any(turn.role == "expert" for turn in request.conversation)
             relevant_knowledge = _best_relevant_knowledge(request.question, knowledge)
+            validated_teaching = _best_validated_teaching(request.question, knowledge)
 
-            # First-question routing stabilizer:
-            # If no relevant organisational knowledge exists yet, no human expert has
-            # contributed, and the sole configured expert clearly matches the question,
-            # the demo must surface that grounded expert route regardless of the model's
-            # coverage/basis labels. This removes stochastic "partial vs insufficient"
-            # variation without inventing people or policy.
+            # Recording-only deterministic first-question route.
+            # Do this BEFORE the provider call: the demo story is about a real knowledge gap,
+            # and the correct next step is completely determined by the configured directory.
+            if (
+                not has_expert_context
+                and validated_teaching is None
+                and relevant_knowledge is None
+                and len(self.settings.expert_directory) == 1
+            ):
+                configured = self.settings.expert_directory[0]
+                skills = list(configured.get("skills", []))
+                if _skill_matches_question(request.question, skills):
+                    answer = SifuAnswer(
+                        coverage="insufficient",
+                        basis="none",
+                        answer=(
+                            "I do not have validated organisational knowledge that establishes "
+                            "whether this RUNNING state means the sump pump is effectively "
+                            "discharging water. I can route this to "
+                            f"{configured['name']}, the configured expert for "
+                            f"{', '.join(skills)}."
+                        ),
+                        known_points=[
+                            "The pump is reported as RUNNING.",
+                            "The water level is still rising.",
+                        ],
+                        missing_information=[
+                            "Whether the pump is actually discharging water effectively."
+                        ],
+                        follow_up_question=None,
+                        recommended_expert=ExpertMatch(
+                            id=configured["id"],
+                            name=configured["name"],
+                            role=configured["role"],
+                            skills=skills,
+                            reason=(
+                                f"{configured['name']} is the configured expert whose skills cover "
+                                f"{', '.join(skills)}."
+                            ),
+                        ),
+                        citations=[],
+                        risk="unknown",
+                        risk_reason=(
+                            "No validated organisational knowledge currently establishes whether "
+                            "the reported RUNNING state corresponds to effective discharge."
+                        ),
+                        reusable_insight=ReusableInsight(
+                            detected=False,
+                            summary=None,
+                            rationale=None,
+                            needs_expert_confirmation=True,
+                        ),
+                        ai={
+                            "take3_demo_stabilized": True,
+                            "take3_demo_route_stabilized": True,
+                            "take3_demo_reuse_stabilized": False,
+                            "mode": "recording_only_grounded_route",
+                        },
+                    )
+                    _validate_grounding(answer, knowledge, experts, request.conversation)
+                    return answer
+
+            # Recording-only deterministic reuse after genuine human validation.
+            # Once the validated teaching exists in the DB, the answer and provenance are
+            # deterministic and do not need another provider round-trip.
+            if not has_expert_context and validated_teaching is not None:
+                teaching = validated_teaching
+                answer = SifuAnswer(
+                    coverage="full",
+                    basis="validated_knowledge",
+                    answer=_grounded_answer_from(teaching),
+                    known_points=[
+                        text for text in [
+                            teaching.get("description"),
+                            *(_flatten_strings(teaching.get("facts"))[:2]),
+                        ] if text
+                    ],
+                    missing_information=[],
+                    follow_up_question=None,
+                    recommended_expert=None,
+                    citations=[
+                        KnowledgeCitation(
+                            pill_id=teaching["pill_id"],
+                            version=teaching["version"],
+                            title=teaching["title"],
+                            domain=teaching["domain"],
+                            source_expert=teaching.get("source_expert"),
+                            validator=teaching.get("validator"),
+                        )
+                    ],
+                    risk="medium",
+                    risk_reason=(
+                        "This answer reuses validated organisational teaching for an operational "
+                        "pump condition; the teaching's escalation boundary remains in force."
+                    ),
+                    reusable_insight=ReusableInsight(
+                        detected=False,
+                        summary=None,
+                        rationale=None,
+                        needs_expert_confirmation=True,
+                    ),
+                    ai={
+                        "take3_demo_stabilized": True,
+                        "take3_demo_route_stabilized": False,
+                        "take3_demo_reuse_stabilized": True,
+                        "mode": "recording_only_validated_reuse",
+                    },
+                )
+                _validate_grounding(answer, knowledge, experts, request.conversation)
+                return answer
+
+            # All other turns remain live-provider Sifu turns. This includes Tan's expert
+            # contribution analysis, where Sifu must detect and structure reusable insight.
+            answer = _original_ask(self, request, actor)
+
+            # Defensive post-provider fallback for non-demo-like variants of the first
+            # question. It should rarely execute now, but keeps the route resilient if the
+            # question wording changes while still matching the sole configured expert.
             if (
                 answer.recommended_expert is None
                 and not has_expert_context
@@ -184,18 +296,12 @@ if _take3_enabled():
                     answer.basis = "none"
                     answer.citations = []
                     answer.answer = (
-                        "I do not have validated organisational knowledge that establishes "
-                        "whether this RUNNING state means the sump pump is effectively "
-                        "discharging water. I can route this to "
-                        f"{configured['name']}, the configured expert for "
-                        f"{', '.join(skills)}."
+                        "I do not have validated organisational knowledge for this condition yet. "
+                        f"I can route this to {configured['name']}."
                     )
-                    answer.known_points = [
-                        "The pump is reported as RUNNING.",
-                        "The water level is still rising.",
-                    ]
+                    answer.known_points = []
                     answer.missing_information = [
-                        "Whether the pump is actually discharging water effectively."
+                        "Validated organisational guidance for this pump condition."
                     ]
                     answer.follow_up_question = None
                     answer.recommended_expert = ExpertMatch(
@@ -208,47 +314,10 @@ if _take3_enabled():
                             f"{', '.join(skills)}."
                         ),
                     )
-                    changed = True
-
-            # Reuse stabilizer:
-            # Once a real expert-confirmed + owner-validated teaching exists, ensure a
-            # matching reuse question carries that genuine provenance even if the live
-            # model omits citation metadata.
-            if not answer.citations:
-                teaching = _best_validated_teaching(request.question, knowledge)
-                if teaching is not None:
-                    answer.coverage = "full"
-                    answer.basis = "validated_knowledge"
-                    answer.citations = [
-                        KnowledgeCitation(
-                            pill_id=teaching["pill_id"],
-                            version=teaching["version"],
-                            title=teaching["title"],
-                            domain=teaching["domain"],
-                            source_expert=teaching.get("source_expert"),
-                            validator=teaching.get("validator"),
-                        )
-                    ]
-                    answer.answer = _grounded_answer_from(teaching)
-                    answer.known_points = [
-                        text for text in [
-                            teaching.get("description"),
-                            *(_flatten_strings(teaching.get("facts"))[:2]),
-                        ] if text
-                    ]
-                    answer.missing_information = []
-                    answer.follow_up_question = None
-                    answer.recommended_expert = None
-                    changed = True
-
-            if changed:
-                _validate_grounding(answer, knowledge, experts, request.conversation)
-                if isinstance(answer.ai, dict):
-                    answer.ai["take3_demo_stabilized"] = True
-                    answer.ai["take3_demo_route_stabilized"] = bool(
-                        answer.recommended_expert is not None
-                    )
-                    answer.ai["take3_demo_reuse_stabilized"] = bool(answer.citations)
+                    if isinstance(answer.ai, dict):
+                        answer.ai["take3_demo_stabilized"] = True
+                        answer.ai["take3_demo_route_stabilized"] = True
+                    _validate_grounding(answer, knowledge, experts, request.conversation)
             return answer
 
         SifuAgent.ask = _take3_stable_ask

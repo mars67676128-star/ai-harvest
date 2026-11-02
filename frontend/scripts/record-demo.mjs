@@ -155,6 +155,21 @@ async function fillAndSend(page, text) {
   await composer.press("Enter");
 }
 
+async function waitForExpertRoute(page) {
+  const askTan = page.getByRole("button", { name: /Ask Tan/i });
+  const liveError = page.getByText(/I couldn’t produce a live AI answer/i);
+
+  await Promise.race([
+    askTan.waitFor({ state: "visible", timeout: 150_000 }),
+    liveError.waitFor({ state: "visible", timeout: 150_000 }).then(async () => {
+      const text = await page.locator(".sifu-message").last().innerText().catch(() => "Live Sifu request failed.");
+      throw new Error(`Live Sifu request failed before expert routing: ${text}`);
+    }),
+  ]);
+
+  return askTan;
+}
+
 async function main() {
   await fs.mkdir(outputDir, { recursive: true });
 
@@ -197,11 +212,10 @@ async function main() {
     await sleep(2200);
 
     await fillAndSend(page, QUESTION);
-    await page.getByText("Knowledge gap", { exact: true }).waitFor({ timeout: 150_000 });
+    const askTan = await waitForExpertRoute(page);
     await sleep(2800);
     await petMoment(page, 1700);
 
-    const askTan = page.getByRole("button", { name: /Ask Tan/i });
     await askTan.scrollIntoViewIfNeeded();
     await sleep(900);
     await askTan.click();

@@ -11,6 +11,19 @@ class ThreadProvider:
 
     def structured_generate(self, operation, payload, schema):
         self.calls.append((operation, payload, schema))
+        if operation == "sifu_candidate":
+            return {
+                "title": "RUNNING status does not confirm effective drainage",
+                "principle": "A RUNNING indication can represent command state without proving effective drainage.",
+                "applies_when": ["RUNNING reflects command or motor state."],
+                "checks": ["Check actual discharge.", "Check the water-level trend."],
+                "escalate_when": ["Water continues rising despite RUNNING status."],
+                "exceptions": ["Actual discharge is independently measured and verified."],
+                "rationale": "The expert distinguished motor state from drainage effectiveness.",
+                "source_experts": ["Tan Wei Ming"],
+                "unresolved_questions": [],
+            }, {"provider": "test", "model": "test-model", "live": True}
+
         has_expert = any(turn["role"] == "expert" for turn in payload["conversation"])
         if has_expert:
             response = {
@@ -125,6 +138,25 @@ def test_persistent_employee_to_expert_to_sifu_thread(tmp_path):
             "sifu",
         ]
 
+        candidate_response = client.post(
+            BASE + f"/sifu/conversations/{conversation_id}/candidate",
+            headers=auth("expert"),
+            json={"source_request_id": request_id},
+        )
+        assert candidate_response.status_code == 201
+        candidate = candidate_response.json()
+        assert candidate["title"] == "RUNNING status does not confirm effective drainage"
+        assert candidate["source_expert_name"] == "Tan Wei Ming"
+        assert candidate["status"] == "awaiting_expert_confirmation"
+
+        confirmed = client.post(
+            BASE + f"/sifu/knowledge-candidates/{candidate['id']}/decision",
+            headers=auth("expert"),
+            json={"decision": "confirm", "note": "This reflects what I meant."},
+        )
+        assert confirmed.status_code == 200
+        assert confirmed.json()["status"] == "confirmed"
+
         employee_view = client.get(
             BASE + f"/sifu/conversations/{conversation_id}", headers=auth("operator")
         )
@@ -133,7 +165,7 @@ def test_persistent_employee_to_expert_to_sifu_thread(tmp_path):
         assert body["expertise_requests"][0]["status"] == "responded"
         assert body["messages"][-1]["answer"]["reusable_insight"]["detected"] is True
 
-    assert len(provider.calls) == 2
+    assert [call[0] for call in provider.calls] == ["sifu_answer", "sifu_answer", "sifu_candidate"]
 
 
 def test_employee_cannot_route_unrecommended_expert(tmp_path):

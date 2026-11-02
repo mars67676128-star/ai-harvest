@@ -91,6 +91,13 @@ def test_persistent_employee_to_expert_to_sifu_thread(tmp_path):
                 "domains": ["Technical Services"],
             }
         ],
+        knowledge_owners=[
+            {
+                "id": "approver",
+                "name": "Jennifer Lim",
+                "domains": ["Technical Services"],
+            }
+        ],
     )
     provider = ThreadProvider()
 
@@ -147,6 +154,8 @@ def test_persistent_employee_to_expert_to_sifu_thread(tmp_path):
         candidate = candidate_response.json()
         assert candidate["title"] == "RUNNING status does not confirm effective drainage"
         assert candidate["source_expert_name"] == "Tan Wei Ming"
+        assert candidate["knowledge_owner_name"] == "Jennifer Lim"
+        assert candidate["domain"] == "Technical Services"
         assert candidate["status"] == "awaiting_expert_confirmation"
 
         confirmed = client.post(
@@ -155,7 +164,20 @@ def test_persistent_employee_to_expert_to_sifu_thread(tmp_path):
             json={"decision": "confirm", "note": "This reflects what I meant."},
         )
         assert confirmed.status_code == 200
-        assert confirmed.json()["status"] == "confirmed"
+        assert confirmed.json()["status"] == "awaiting_owner_validation"
+
+        reviews = client.get(BASE + "/sifu/reviews", headers=auth("approver"))
+        assert reviews.status_code == 200
+        assert [item["id"] for item in reviews.json()] == [candidate["id"]]
+
+        validated = client.post(
+            BASE + f"/sifu/knowledge-candidates/{candidate['id']}/owner-decision",
+            headers=auth("approver"),
+            json={"decision": "validate", "note": "Approved for Technical Services."},
+        )
+        assert validated.status_code == 200
+        assert validated.json()["status"] == "validated"
+        assert validated.json()["owner_decision"]["actor"] == "approver"
 
         employee_view = client.get(
             BASE + f"/sifu/conversations/{conversation_id}", headers=auth("operator")

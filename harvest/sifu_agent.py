@@ -294,4 +294,4 @@ def attach_sifu_routes(
     from .sifu_threads import attach_sifu_thread_routes
 
     attach_sifu_thread_routes(app, service, settings, identity, prefix)
-    attach_sifu_candidate_routes(app, service, identity, prefix)
+    attach_sifu_candidate_routes(app, service, settings, identity, prefix)

@@ -64,6 +64,13 @@ export interface SifuConversation {
   expertise_requests: ExpertiseRequest[];
 }
 
+export interface ExpertResponseResult {
+  response: Record<string, unknown>;
+  sifu?: SifuAnswer | null;
+  sifu_error?: { code: string; message: string } | null;
+  conversation: SifuConversation;
+}
+
 export async function startSifuConversation(question: string): Promise<SifuConversation> {
   return request<SifuConversation>("/sifu/conversations", "POST", { question, context: {} });
 }
@@ -91,6 +98,17 @@ export async function getSifuConversation(conversationId: string): Promise<SifuC
   return request<SifuConversation>(`/sifu/conversations/${conversationId}`);
 }
 
-export async function listSifuConversations(): Promise<SifuConversation[]> {
-  return request<SifuConversation[]>("/sifu/conversations");
+export async function listExpertiseRequests(): Promise<ExpertiseRequest[]> {
+  return request<ExpertiseRequest[]>("/sifu/expertise-requests");
+}
+
+export async function respondToExpertiseRequest(
+  requestId: string,
+  content: string,
+  outcome: "answer" | "not_my_area" | "need_more_information" | "dont_know" = "answer",
+): Promise<ExpertResponseResult> {
+  return request<ExpertResponseResult>(`/sifu/expertise-requests/${requestId}/respond`, "POST", {
+    content,
+    outcome,
+  });
 }

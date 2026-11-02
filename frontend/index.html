@@ -10,6 +10,11 @@
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <title>SIFU · Ask once. Teach forever.</title>
+    <style>
+      /* Take 2 recording branch: keep the mascot visible/animated without allowing its
+         floating overlay to intercept scripted clicks on controls underneath it. */
+      .sifu-pet-shell { pointer-events: none !important; }
+    </style>
   </head>
   <body>
     <div id="root"></div>

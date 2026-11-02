@@ -56,12 +56,20 @@ class Settings:
             required = {"id", "name", "role", "skills"}
             if not required <= entry.keys():
                 raise ValueError("Each SIFU expert entry requires id, name, role and skills")
-            if not all(isinstance(entry[key], str) and entry[key].strip() for key in ("id", "name", "role")):
+            if not all(
+                isinstance(entry[key], str) and entry[key].strip()
+                for key in ("id", "name", "role")
+            ):
                 raise ValueError("SIFU expert id, name and role must be nonempty strings")
             if not isinstance(entry["skills"], list) or not all(
                 isinstance(skill, str) and skill.strip() for skill in entry["skills"]
             ):
                 raise ValueError("SIFU expert skills must be a list of nonempty strings")
+            domains = entry.get("domains", [])
+            if not isinstance(domains, list) or not all(
+                isinstance(domain, str) and domain.strip() for domain in domains
+            ):
+                raise ValueError("SIFU expert domains must be a list of nonempty strings")
             if entry["id"] in seen_experts:
                 raise ValueError(f"Duplicate SIFU expert id: {entry['id']}")
             seen_experts.add(entry["id"])

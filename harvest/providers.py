@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Protocol
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from .config import Settings
 from .demo_corrections import BACKFLOW_REVISED_TEXT
@@ -274,6 +274,22 @@ def generate(provider: LLMProvider, operation: str, payload: dict, output: type[
         return output.model_validate(data), meta
     except DomainError:
         raise
+    except ValidationError as exc:
+        # Log only field locations and validator types; never raw values or submitted text.
+        details = [
+            {"loc": list(error.get("loc", ())), "type": error.get("type", "unknown")}
+            for error in exc.errors(include_input=False, include_url=False)
+        ]
+        logger.warning(
+            "LLM validation failed operation=%s details=%s",
+            operation,
+            details,
+        )
+        raise DomainError(
+            502,
+            "LLM_UNAVAILABLE",
+            "AI output was unavailable, incomplete or schema-invalid. No production knowledge changed.",
+        ) from exc
     except Exception as exc:
         # Provider bodies may contain secrets or submitted text; do not echo them.
         logger.warning("LLM generation failed operation=%s error_type=%s", operation, type(exc).__name__)

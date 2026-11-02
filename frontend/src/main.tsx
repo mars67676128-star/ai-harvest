@@ -9,6 +9,7 @@ import { demoPersona } from "./demoIdentity";
 import "./index.css";
 import "./sifu-live.css";
 import "./sifu-pet.css";
+import "./brand-polish.css";
 
 function EmployeeWorkspace() {
   useEffect(() => {

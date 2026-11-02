@@ -34,6 +34,17 @@ function Wait-Http([string]$Url, [int]$Seconds = 60) {
     throw "Timed out waiting for $Url"
 }
 
+function Get-JsonArrayCount([string]$Value, [string]$Name) {
+    if ([string]::IsNullOrWhiteSpace($Value)) { return 0 }
+    try {
+        $parsed = $Value | ConvertFrom-Json -ErrorAction Stop
+        if ($null -eq $parsed) { return 0 }
+        return @($parsed).Count
+    } catch {
+        throw "$Name must contain a valid JSON array. Current value could not be parsed."
+    }
+}
+
 if (-not (Test-Path $Recorder)) {
     throw "Take 2 recorder not found at $Recorder. Make sure you are on demo/take2-sifu-agent."
 }
@@ -42,12 +53,6 @@ if (-not (Test-Path $Python)) {
 }
 if (-not $env:HARVEST_LLM_API_KEY) {
     throw "HARVEST_LLM_API_KEY is not set in this PowerShell session."
-}
-if (-not $env:SIFU_EXPERT_DIRECTORY) {
-    throw "SIFU_EXPERT_DIRECTORY is not set. Use the Sifu-agent demo expert directory configuration."
-}
-if (-not $env:SIFU_KNOWLEDGE_OWNERS) {
-    throw "SIFU_KNOWLEDGE_OWNERS is not set. Use the Sifu-agent Knowledge Owner configuration."
 }
 if (Test-LocalPort 8000) {
     throw "Port 8000 is already in use. Stop the currently running backend before recording Take 2."
@@ -62,6 +67,8 @@ $OriginalBaseUrl = $env:HARVEST_LLM_BASE_URL
 $OriginalModel = $env:HARVEST_LLM_MODEL
 $OriginalReasoning = $env:HARVEST_LLM_REASONING_EFFORT
 $OriginalDemoUrl = $env:SIFU_DEMO_URL
+$OriginalExpertDirectory = $env:SIFU_EXPERT_DIRECTORY
+$OriginalKnowledgeOwners = $env:SIFU_KNOWLEDGE_OWNERS
 
 $BackendProcess = $null
 $FrontendProcess = $null
@@ -72,12 +79,32 @@ try {
     if (Test-Path $VideoDb) { Remove-Item $VideoDb -Force }
     if (Test-Path $Webm) { Remove-Item $Webm -Force }
 
+    # A Take 2 capture always starts from a clean database and the live Sifu agent.
     $env:HARVEST_DB = $VideoDb
     $env:HARVEST_LLM_PROVIDER = "openai"
     $env:HARVEST_LLM_BASE_URL = "https://api.openai.com/v1"
     if (-not $env:HARVEST_LLM_MODEL) { $env:HARVEST_LLM_MODEL = "gpt-6-luna" }
     if (-not $env:HARVEST_LLM_REASONING_EFFORT) { $env:HARVEST_LLM_REASONING_EFFORT = "high" }
     $env:SIFU_DEMO_URL = "http://127.0.0.1:5173"
+
+    # The recording story requires one relevant expert and one Knowledge Owner. An
+    # environment variable containing [] is technically set, but gives Sifu nobody to
+    # route to, so treat an empty list the same as an omitted demo configuration.
+    $expertCount = Get-JsonArrayCount $env:SIFU_EXPERT_DIRECTORY "SIFU_EXPERT_DIRECTORY"
+    if ($expertCount -eq 0) {
+        $env:SIFU_EXPERT_DIRECTORY = '[{"id":"expert","name":"Tan Wei Ming","role":"Senior M&E Technician","skills":["sump systems","drainage","pump maintenance"],"domains":["Technical Services"]}]'
+        $expertCount = 1
+        Write-Host "Take 2 expert directory was empty; using demo expert Tan Wei Ming." -ForegroundColor Yellow
+    }
+
+    $ownerCount = Get-JsonArrayCount $env:SIFU_KNOWLEDGE_OWNERS "SIFU_KNOWLEDGE_OWNERS"
+    if ($ownerCount -eq 0) {
+        $env:SIFU_KNOWLEDGE_OWNERS = '[{"id":"approver","name":"Jennifer Lim","domains":["Technical Services"]}]'
+        $ownerCount = 1
+        Write-Host "Take 2 Knowledge Owner list was empty; using demo owner Jennifer Lim." -ForegroundColor Yellow
+    }
+
+    Write-Host "Take 2 routing config: $expertCount expert(s), $ownerCount Knowledge Owner(s)." -ForegroundColor DarkGray
 
     Write-Host "Preparing Take 2 Playwright environment..." -ForegroundColor Cyan
     Push-Location $FrontendDir
@@ -91,8 +118,8 @@ try {
     Write-Host "Preflighting Sifu-agent backend..." -ForegroundColor Cyan
     Push-Location $RepoRoot
     try {
-        & $Python -c "from harvest.main import app; print('Sifu-agent backend import OK')"
-        if ($LASTEXITCODE -ne 0) { throw "Sifu-agent backend import failed." }
+        & $Python -c "from harvest.config import Settings; s=Settings.from_env(); assert len(s.expert_directory)>0, 'empty expert directory'; assert len(s.knowledge_owners)>0, 'empty Knowledge Owner list'; from harvest.main import app; print(f'Sifu-agent backend import OK; experts={len(s.expert_directory)} owners={len(s.knowledge_owners)} provider={s.provider}')"
+        if ($LASTEXITCODE -ne 0) { throw "Sifu-agent backend preflight failed." }
     } finally { Pop-Location }
 
     Write-Host "Starting clean Sifu-agent backend..." -ForegroundColor Cyan
@@ -135,4 +162,6 @@ finally {
     if ($null -eq $OriginalModel) { Remove-Item Env:HARVEST_LLM_MODEL -ErrorAction SilentlyContinue } else { $env:HARVEST_LLM_MODEL = $OriginalModel }
     if ($null -eq $OriginalReasoning) { Remove-Item Env:HARVEST_LLM_REASONING_EFFORT -ErrorAction SilentlyContinue } else { $env:HARVEST_LLM_REASONING_EFFORT = $OriginalReasoning }
     if ($null -eq $OriginalDemoUrl) { Remove-Item Env:SIFU_DEMO_URL -ErrorAction SilentlyContinue } else { $env:SIFU_DEMO_URL = $OriginalDemoUrl }
+    if ($null -eq $OriginalExpertDirectory) { Remove-Item Env:SIFU_EXPERT_DIRECTORY -ErrorAction SilentlyContinue } else { $env:SIFU_EXPERT_DIRECTORY = $OriginalExpertDirectory }
+    if ($null -eq $OriginalKnowledgeOwners) { Remove-Item Env:SIFU_KNOWLEDGE_OWNERS -ErrorAction SilentlyContinue } else { $env:SIFU_KNOWLEDGE_OWNERS = $OriginalKnowledgeOwners }
 }

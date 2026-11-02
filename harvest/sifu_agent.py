@@ -290,6 +290,8 @@ def attach_sifu_routes(
     def sifu_ask(body: SifuAskRequest, actor: Actor = Depends(identity)):
         return agent.ask(body, actor)
 
+    from .sifu_candidate_routes import attach_sifu_candidate_routes
     from .sifu_threads import attach_sifu_thread_routes
 
     attach_sifu_thread_routes(app, service, settings, identity, prefix)
+    attach_sifu_candidate_routes(app, service, identity, prefix)

@@ -119,16 +119,29 @@ export default function ExpertRequestsView() {
   }
 
   if (candidate) {
+    const statusLabel =
+      candidate.status === "validated"
+        ? "Validated"
+        : candidate.status === "awaiting_owner_validation"
+          ? "Meaning confirmed"
+          : candidate.status === "changes_requested"
+            ? "Changes requested"
+            : candidate.status === "rejected"
+              ? "Rejected"
+              : candidate.status === "not_reusable"
+                ? "Not reusable"
+                : "Candidate";
+
     return (
       <section className="review-page page-fade">
         <div className="review-header">
           <button className="back-link" onClick={() => setCandidate(null)}>← Conversation</button>
-          <span className={`status-word ${candidate.status === "confirmed" ? "validated" : "candidate"}`}>
-            {candidate.status === "confirmed" ? "Meaning confirmed" : candidate.status === "not_reusable" ? "Not reusable" : "Candidate"}
+          <span className={`status-word ${candidate.status === "validated" ? "validated" : "candidate"}`}>
+            {statusLabel}
           </span>
         </div>
         <article className="review-manuscript">
-          <div className="manuscript-kicker">Candidate Knowledge Pill</div>
+          <div className="manuscript-kicker">Candidate Knowledge Pill · {candidate.domain}</div>
           <h1>{candidate.title}</h1>
           <p className="review-byline">Extracted from this conversation · Source: {candidate.source_expert_name}</p>
 
@@ -141,16 +154,21 @@ export default function ExpertRequestsView() {
           {candidate.unresolved_questions.length > 0 && <KnowledgeBlock title="Still unresolved"><BulletList items={candidate.unresolved_questions} /></KnowledgeBlock>}
 
           <KnowledgeBlock title="Source"><p>{candidate.source_experts.join(", ")}</p></KnowledgeBlock>
+          <KnowledgeBlock title="Knowledge Owner"><p>{candidate.knowledge_owner_name}</p></KnowledgeBlock>
 
           {candidate.status === "awaiting_expert_confirmation" ? (
             <div className="manuscript-actions">
               <button className="text-action" disabled={loading} onClick={() => void decideCandidate("not_reusable")}>Not reusable</button>
               <button className="primary-action" disabled={loading} onClick={() => void decideCandidate("confirm")}>Looks right ✓</button>
             </div>
-          ) : candidate.status === "confirmed" ? (
-            <div className="quiet-success">✓ You confirmed that Sifu understood your meaning. This is still a candidate until a Knowledge Owner validates it.</div>
+          ) : candidate.status === "awaiting_owner_validation" ? (
+            <div className="quiet-success">✓ You confirmed that Sifu understood your meaning. The candidate is now waiting for {candidate.knowledge_owner_name} to validate it before Sifu may teach it organisationally.</div>
+          ) : candidate.status === "validated" ? (
+            <div className="quiet-success">✓ This teaching is validated organisational knowledge.</div>
+          ) : candidate.status === "changes_requested" ? (
+            <div className="muted-copy">The Knowledge Owner requested clarification. The revision loop will return this to the Sifu conversation.</div>
           ) : (
-            <div className="muted-copy">This insight will remain case context and will not be promoted as reusable organisational knowledge.</div>
+            <div className="muted-copy">This insight will not be promoted as validated organisational knowledge.</div>
           )}
           {error && <p className="risk-note">{error}</p>}
         </article>

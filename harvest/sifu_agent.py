@@ -69,10 +69,19 @@ class ReusableInsight(AgentModel):
 
     @model_validator(mode="after")
     def coherent(self):
+        # A detected insight must still be explicit enough for a human expert to verify.
         if self.detected and not self.summary:
             raise ValueError("Detected reusable insight requires a summary")
-        if not self.detected and (self.summary or self.rationale):
-            raise ValueError("No reusable insight should not include candidate content")
+
+        # Structured Outputs can guarantee field shape, but not this cross-field semantic
+        # invariant. If the model says there is no reusable insight yet, fail closed by
+        # discarding any stray candidate wording instead of failing the entire Sifu turn.
+        if not self.detected:
+            self.summary = None
+            self.rationale = None
+
+        # Reusable insight is always a candidate until a human expert confirms it.
+        self.needs_expert_confirmation = True
         return self
 
 

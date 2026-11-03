@@ -247,6 +247,23 @@ async function dumpDiagnostics(page, reason) {
   fs.writeFileSync(DIAGNOSTICS, `Reason: ${reason}\n\n${JSON.stringify(data, null, 2)}`, 'utf8');
 }
 
+async function findTanRequestWithRetry(page) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const row = await firstVisible(page, [
+      { type:'css', css:'button.timeline-row.high' },
+      { type:'text', text:/RUNNING|sump pump|water level/i },
+    ], 3500);
+    if (row) return row;
+    if (attempt < 3) {
+      await page.reload({ waitUntil:'domcontentloaded' });
+      await page.waitForLoadState('networkidle', { timeout:5000 }).catch(() => {});
+      await sleep(900);
+      await addTake3Layer(page);
+    }
+  }
+  return null;
+}
+
 async function run() {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -294,13 +311,25 @@ async function run() {
     // Stay on the native frontend while Sifu thinks and answers.
     await waitForRootText(page, /Checking approved organisational knowledge/i, 5000);
     await sleep(1700);
-    await waitForRootText(page, /Knowledge gap|qualified M&E|Tan Wei Ming|does not prove/i, 20000);
+    const answerSeen = await waitForRootText(page, /Knowledge gap|qualified M&E|Tan Wei Ming|does not prove/i, 20000);
+    if (!answerSeen) throw new Error('Sifu answer did not appear after Amanda question.');
     await sleep(3000);
 
+    // Routing is required. Do not advance to Tan unless the request was actually created.
     await clickFirst(page, [
       { type:'role', role:'button', name:/Ask Tan/i },
       { type:'text', text:/Ask Tan/i },
-    ], { optional:true, hold:900 });
+    ], { hold:1000 });
+
+    const routeConfirmed = await waitForRootText(
+      page,
+      /Expert request sent to Tan Wei Ming|awaiting a human response|kept your question.*Tan Wei Ming/i,
+      7000,
+    );
+    if (!routeConfirmed) {
+      throw new Error('Tan routing click did not produce an expertise-request confirmation.');
+    }
+    await sleep(1400);
 
     await story(
       page,
@@ -311,11 +340,12 @@ async function run() {
     );
 
     await openPersona(page, 'expert');
-    const requestRow = await firstVisible(page, [
-      { type:'css', css:'button.timeline-row.high' },
-      { type:'text', text:/RUNNING|sump pump|water level/i },
-    ], 10000);
-    if (!requestRow) throw new Error('Expertise request not found for Tan.');
+    const requestRow = await findTanRequestWithRetry(page);
+    if (!requestRow) {
+      throw new Error(
+        'Tan request was created but is not visible to the local expert persona. In demo mode, Tan must use SIFU_EXPERT_DIRECTORY id "expert" so it matches the demo-expert authenticated actor. Restart the backend with the Take 3 demo environment and rerun.',
+      );
+    }
     await requestRow.click();
     await sleep(1200);
 
@@ -349,7 +379,7 @@ async function run() {
     await clickFirst(page, [
       { type:'role', role:'button', name:/Looks right/i },
       { type:'text', text:/Looks right/i },
-    ], { optional:true, hold:1200 });
+    ], { hold:1200 });
 
     await story(
       page,

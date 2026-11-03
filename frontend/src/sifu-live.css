@@ -227,6 +227,41 @@
   cursor: wait;
 }
 
+/* Keep the expert teaching interaction visually centred in the main workspace.
+   The generic conversation composer is fixed-positioned for chat; the expert
+   form has an extra outcome row and looked shifted toward the right edge. */
+.expert-response-composer {
+  left: 248px !important;
+  right: 0 !important;
+  width: auto !important;
+  transform: none !important;
+  padding: 0 48px;
+  display: grid;
+  justify-items: center;
+  pointer-events: none;
+}
+
+.expert-response-composer > * {
+  width: min(720px, calc(100vw - 248px - 96px));
+  pointer-events: auto;
+}
+
+.expert-response-composer .expert-outcomes {
+  justify-content: center;
+  margin-bottom: 10px;
+}
+
+@media (max-width: 980px) {
+  .expert-response-composer {
+    left: 76px !important;
+    padding: 0 28px;
+  }
+
+  .expert-response-composer > * {
+    width: min(720px, calc(100vw - 76px - 56px));
+  }
+}
+
 @media (max-width: 860px) {
   .ai-connection {
     display: none;
@@ -242,5 +277,16 @@
 
   .provenance-item span {
     margin-top: 3px;
+  }
+}
+
+@media (max-width: 760px) {
+  .expert-response-composer {
+    left: 0 !important;
+    padding: 0 16px;
+  }
+
+  .expert-response-composer > * {
+    width: 100%;
   }
 }

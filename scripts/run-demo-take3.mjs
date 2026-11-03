@@ -13,27 +13,52 @@ const pythonExe = path.join(repoRoot, '.venv', 'Scripts', 'python.exe');
 const dbPath = path.join(repoRoot, 'data', 'harvest_take3.db');
 const backendUrl = 'http://127.0.0.1:8000';
 const frontendUrl = 'http://127.0.0.1:5173';
+const comspec = process.env.ComSpec || 'cmd.exe';
 
 fs.mkdirSync(videoDir, { recursive: true });
 
 const children = [];
 let shuttingDown = false;
 
+function isCmdShim(cmd) {
+  return process.platform === 'win32' && /\.cmd$/i.test(cmd);
+}
+
+function commandLine(cmd, args = []) {
+  // Commands passed here are npm/npx shims plus simple flag arguments. Keeping the
+  // command line unquoted avoids Node's Windows .cmd spawn EINVAL issue while cwd
+  // handles paths containing spaces such as C:\\Users\\Daymas Koh\\...
+  return [cmd, ...args].join(' ');
+}
+
 function run(cmd, args, options = {}) {
-  const result = spawnSync(cmd, args, {
-    cwd: options.cwd ?? repoRoot,
-    env: options.env ?? process.env,
+  const cwd = options.cwd ?? repoRoot;
+  const env = options.env ?? process.env;
+  const useCmd = isCmdShim(cmd);
+  const executable = useCmd ? comspec : cmd;
+  const executableArgs = useCmd ? ['/d', '/s', '/c', commandLine(cmd, args)] : args;
+
+  const result = spawnSync(executable, executableArgs, {
+    cwd,
+    env,
     stdio: 'inherit',
     shell: false,
+    windowsHide: false,
   });
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${cmd} exited with code ${result.status}`);
 }
 
 function start(cmd, args, options = {}) {
-  const child = spawn(cmd, args, {
-    cwd: options.cwd ?? repoRoot,
-    env: options.env ?? process.env,
+  const cwd = options.cwd ?? repoRoot;
+  const env = options.env ?? process.env;
+  const useCmd = isCmdShim(cmd);
+  const executable = useCmd ? comspec : cmd;
+  const executableArgs = useCmd ? ['/d', '/s', '/c', commandLine(cmd, args)] : args;
+
+  const child = spawn(executable, executableArgs, {
+    cwd,
+    env,
     stdio: 'inherit',
     windowsHide: false,
     shell: false,
@@ -112,6 +137,7 @@ async function main() {
     console.log('Installing Playwright locally...');
     run('npm.cmd', ['install', '--no-save', '--package-lock=false', 'playwright'], { cwd: frontendDir });
   }
+
   console.log('Ensuring Chromium is installed...');
   run('npx.cmd', ['playwright', 'install', 'chromium'], { cwd: frontendDir });
 

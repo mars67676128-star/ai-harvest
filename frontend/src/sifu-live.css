@@ -227,6 +227,17 @@
   cursor: wait;
 }
 
+/* Keep fixed conversation composers centred within the content pane. */
+.conversation-composer-wrap {
+  transform: translateX(-50%);
+}
+
+/* Expert teaching should read as the focal action, not a right-side panel. */
+.expert-response-composer {
+  width: min(720px, calc(100vw - 248px - 140px));
+  max-width: 720px;
+}
+
 @media (max-width: 860px) {
   .ai-connection {
     display: none;
@@ -242,5 +253,16 @@
 
   .provenance-item span {
     margin-top: 3px;
+  }
+
+  .expert-response-composer {
+    width: min(720px, calc(100vw - 76px - 56px));
+  }
+}
+
+@media (max-width: 760px) {
+  .conversation-composer-wrap {
+    left: 50%;
+    width: calc(100vw - 32px);
   }
 }

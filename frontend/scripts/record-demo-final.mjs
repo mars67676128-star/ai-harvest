@@ -140,8 +140,8 @@ replaceRequired(
     await ripple(page, caseRow);
     await caseRow.click();
 
-    const caseHeading = page.getByRole("heading", { name: /Harbour Exchange/i });
-    await caseHeading.waitFor({ state: "visible", timeout: 30_000 });
+    const caseTitle = page.locator(".case-title").filter({ hasText: "Harbour Exchange" }).first();
+    await caseTitle.waitFor({ state: "visible", timeout: 30_000 });
     await sleep(1300);
 
     const readings = page.locator(".tile-grid").first();

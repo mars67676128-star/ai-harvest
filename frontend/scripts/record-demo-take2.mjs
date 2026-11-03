@@ -15,6 +15,7 @@ const QUESTION_2 = "My sump pump is showing RUNNING, but the water level keeps g
 
 fs.mkdirSync(VIDEO_DIR, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const app = (page) => page.locator('#root');
 
 async function addCinematicLayer(page) {
   await page.addStyleTag({ content: `
@@ -32,9 +33,8 @@ async function addCinematicLayer(page) {
     @keyframes take2Ripple { from{opacity:1;width:16px;height:16px} to{opacity:0;width:90px;height:90px} }
     #take2-caption { position:absolute; left:50%; bottom:54px; transform:translateX(-50%) translateY(16px); padding:16px 24px; background:rgba(23,63,64,.94); color:white; border-radius:18px; font:700 21px/1.25 Inter,system-ui,sans-serif; opacity:0; transition:opacity .4s ease,transform .4s ease; box-shadow:0 14px 50px rgba(0,0,0,.18); }
     #take2-caption.on { opacity:1; transform:translateX(-50%) translateY(0); }
-    body.take2-camera #root, body.take2-camera > div:first-child { transition:transform 1.05s cubic-bezier(.2,.8,.2,1); }
+    body.take2-camera #root { transition:transform 1.05s cubic-bezier(.2,.8,.2,1); }
   `});
-
   await page.evaluate(() => {
     if (document.getElementById('take2-stage')) return;
     const stage = document.createElement('div');
@@ -77,7 +77,7 @@ async function focus(page, locator, pad = 18) {
   await page.evaluate(({ x, y, width, height, pad }) => {
     const f = document.getElementById('take2-focus');
     Object.assign(f.style, {
-      left: `${x-pad}px`, top: `${y-pad}px`, width: `${width+pad*2}px`, height: `${height+pad*2}px`
+      left:`${x-pad}px`, top:`${y-pad}px`, width:`${width+pad*2}px`, height:`${height+pad*2}px`
     });
     f.classList.add('on');
   }, { ...box, pad });
@@ -111,7 +111,7 @@ async function cameraTo(page, locator, scale = 1.12) {
   const dx = vp.width/2 - cx;
   const dy = vp.height/2 - cy;
   await page.evaluate(({ scale, dx, dy }) => {
-    const root = document.querySelector('#root') || document.body.firstElementChild;
+    const root = document.querySelector('#root');
     if (!root) return;
     document.body.classList.add('take2-camera');
     root.style.transformOrigin = 'center center';
@@ -122,18 +122,19 @@ async function cameraTo(page, locator, scale = 1.12) {
 
 async function cameraReset(page) {
   await page.evaluate(() => {
-    const root = document.querySelector('#root') || document.body.firstElementChild;
+    const root = document.querySelector('#root');
     if (root) root.style.transform = 'translate(0,0) scale(1)';
   });
   await sleep(1050);
 }
 
 function candidates(page, specs) {
+  const root = app(page);
   return specs.map((s) => {
-    if (s.type === 'role') return page.getByRole(s.role, { name:s.name });
-    if (s.type === 'text') return page.getByText(s.text, { exact:s.exact ?? false });
-    if (s.type === 'placeholder') return page.getByPlaceholder(s.text);
-    return page.locator(s.css);
+    if (s.type === 'role') return root.getByRole(s.role, { name:s.name });
+    if (s.type === 'text') return root.getByText(s.text, { exact:s.exact ?? false });
+    if (s.type === 'placeholder') return root.getByPlaceholder(s.text);
+    return root.locator(s.css);
   });
 }
 
@@ -154,12 +155,7 @@ async function firstVisible(page, specs, timeout = 7000) {
   return null;
 }
 
-async function clickFirst(page, specs, opts = {}) {
-  const loc = await firstVisible(page, specs, opts.timeout || 7000);
-  if (!loc) {
-    if (opts.optional) return null;
-    throw new Error(`Could not find clickable target: ${JSON.stringify(specs)}`);
-  }
+async function animateClick(page, loc, opts = {}) {
   await loc.scrollIntoViewIfNeeded().catch(() => {});
   await focus(page, loc, opts.pad ?? 14);
   await cameraTo(page, loc, opts.scale ?? 1.08);
@@ -169,6 +165,15 @@ async function clickFirst(page, specs, opts = {}) {
   await sleep(opts.post ?? 900);
   await unfocus(page);
   await cameraReset(page);
+}
+
+async function clickFirst(page, specs, opts = {}) {
+  const loc = await firstVisible(page, specs, opts.timeout || 7000);
+  if (!loc) {
+    if (opts.optional) return null;
+    throw new Error(`Could not find clickable target: ${JSON.stringify(specs)}`);
+  }
+  await animateClick(page, loc, opts);
   return loc;
 }
 
@@ -197,13 +202,11 @@ async function composer(page) {
     {type:'css', css:'input[type="text"]'},
     {type:'css', css:'[role="textbox"]'}
   ];
-
   const deadline = Date.now() + 12000;
   while (Date.now() < deadline) {
-    const all = candidates(page, specs);
     let best = null;
     let bestArea = 0;
-    for (const loc of all) {
+    for (const loc of candidates(page, specs)) {
       const count = await loc.count().catch(() => 0);
       for (let i=0; i<count; i++) {
         const item = loc.nth(i);
@@ -262,7 +265,7 @@ async function openPersona(page, persona) {
 async function waitForAnyText(page, regexes, timeout = 18000) {
   const end = Date.now() + timeout;
   while (Date.now() < end) {
-    const text = await page.locator('body').innerText().catch(() => '');
+    const text = await app(page).innerText().catch(() => '');
     if (regexes.some((r) => r.test(text))) return text;
     await sleep(400);
   }
@@ -271,25 +274,23 @@ async function waitForAnyText(page, regexes, timeout = 18000) {
 
 async function dumpDiagnostics(page, reason) {
   const info = await page.evaluate(() => {
-    const editable = [...document.querySelectorAll('textarea,input,[contenteditable="true"],[role="textbox"]')].map((el) => ({
+    const editable = [...document.querySelectorAll('#root textarea,#root input,#root [contenteditable="true"],#root [role="textbox"]')].map((el) => ({
       tag:el.tagName,
       type:el.getAttribute('type'),
       placeholder:el.getAttribute('placeholder'),
       ariaLabel:el.getAttribute('aria-label'),
       role:el.getAttribute('role'),
-      contenteditable:el.getAttribute('contenteditable'),
       visible:!!(el.offsetWidth || el.offsetHeight || el.getClientRects().length),
       text:(el.innerText || el.value || '').slice(0,160)
     }));
-    const nav = [...document.querySelectorAll('a,button')]
+    const nav = [...document.querySelectorAll('#root a,#root button')]
       .filter((el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length))
       .map((el) => (el.innerText || el.getAttribute('aria-label') || '').trim())
       .filter(Boolean)
       .slice(0,80);
-    return { title:document.title, url:location.href, editable, nav, body:document.body.innerText.slice(0,4000) };
+    return { title:document.title, url:location.href, editable, nav, body:(document.querySelector('#root')?.innerText || '').slice(0,4000) };
   });
-  const text = [`Reason: ${reason}`, '', JSON.stringify(info, null, 2)].join('\n');
-  fs.writeFileSync(DIAGNOSTICS, text, 'utf8');
+  fs.writeFileSync(DIAGNOSTICS, [`Reason: ${reason}`, '', JSON.stringify(info, null, 2)].join('\n'), 'utf8');
   console.error(`\nDiagnostics written to: ${DIAGNOSTICS}`);
   console.error(`Current page: ${info.url}`);
   console.error(`Visible controls: ${info.nav.slice(0,20).join(' | ')}`);
@@ -316,7 +317,6 @@ async function run() {
       await dumpDiagnostics(page, 'Ask Sifu composer not found after opening Ask Sifu and scanning all textbox-like controls.');
       throw new Error(`Ask Sifu composer not found. See ${DIAGNOSTICS}`);
     }
-
     await focus(page, q, 22);
     await cameraTo(page, q, 1.12);
     await caption(page, 'Amanda asks Sifu instead of searching documents or messaging around.', 2200);
@@ -405,23 +405,37 @@ async function run() {
 
     await titleCard(page, 'OPERATIONAL PAYOFF', 'Knowledge becomes a decision.', 'Harbour Exchange · pump RUNNING · water rising 3 mm/min · critical equipment not exposed.', 3400);
 
-    await clickFirst(page, [
-      {type:'text', text:/Cases/i},
-      {type:'role', role:'button', name:/Cases/i},
-      {type:'role', role:'link', name:/Cases/i}
-    ], { optional:true, scale:1.06 });
-    await clickFirst(page, [{type:'text', text:/Harbour Exchange/i}], { optional:true, scale:1.08 });
-    await clickFirst(page, [
-      {type:'role', role:'button', name:/apply validated knowledge|run assessment|assess/i},
-      {type:'text', text:/Apply Validated Knowledge|Run assessment/i}
-    ], { optional:true, scale:1.10, post:1500 });
+    // Use the actual demo timeline row. main.tsx routes this to ?case=harbour-exchange.
+    const caseRow = app(page).locator('button.timeline-row').filter({ hasText:'Pump RUNNING while water rises' }).first();
+    if (await caseRow.isVisible().catch(() => false)) {
+      await focus(page, caseRow, 16);
+      await cameraTo(page, caseRow, 1.06);
+      await sleep(600);
+      await ripple(page, caseRow);
+      await caseRow.click();
+      await page.waitForURL(/case=harbour-exchange/i, { timeout:8000 });
+      await page.waitForLoadState('domcontentloaded');
+      await sleep(1200);
+      await addCinematicLayer(page);
+    } else {
+      const u = new URL(BASE);
+      u.searchParams.set('case', 'harbour-exchange');
+      await page.goto(u.toString(), { waitUntil:'domcontentloaded' });
+      await sleep(1200);
+      await addCinematicLayer(page);
+    }
 
-    const esc = await firstVisible(page, [{type:'text', text:/ESCALATE/i}], 8000);
+    await clickFirst(page, [
+      {type:'role', role:'button', name:/apply validated knowledge/i},
+      {type:'text', text:/Apply Validated Knowledge/i, exact:true}
+    ], { scale:1.10, post:1700 });
+
+    const esc = await firstVisible(page, [{type:'text', text:/^ESCALATE$/i, exact:true}], 12000);
     if (esc) {
       await focus(page, esc, 26);
       await cameraTo(page, esc, 1.14);
       await caption(page, 'Deterministic rule trace → ESCALATE. Human remains in control.', 3000);
-      await sleep(900);
+      await sleep(1200);
     }
 
     await titleCard(page, 'SIFU', 'Tan taught it once. Every shift knows.', 'Shared intelligence from us. Ask once. Teach forever.', 4200);
